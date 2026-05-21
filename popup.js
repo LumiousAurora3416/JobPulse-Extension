@@ -122,56 +122,82 @@ function extractJobPageData() {
     return textFrom(d);
   }
 
-  /** 只保留「职位描述」「职位要求」两块正文（按页面中出现的顺序截取） */
+  /** 提取「职责」和「要求」两块正文，支持多种章节标题变体 */
   function extractDescReqModules(fullText) {
     const t = clean(fullText);
     if (!t) return "";
 
     const endSection =
-      /(?:福利待遇|薪资福利|工作地点|办公地址|公司介绍|关于我们|投递方式|相似职位|你可能感兴趣|相关推荐|查看更多|热招职位|职位列表)/;
+      /(?:福利待遇|薪资福利|工作地点|办公地址|公司介绍|关于我们|投递方式|相似职位|你可能感兴趣|相关推荐|查看更多|热招职位|职位列表|岗位亮点)/;
 
-    const iDesc = t.indexOf("职位描述");
-    const iReq = t.indexOf("职位要求");
+    // 职责类标题 —— 描述具体工作内容
+    const dutyHeadings = [
+      "职位描述", "岗位职责", "工作职责", "岗位描述",
+      "职位介绍", "工作内容", "职责描述", "你需要做",
+      "你将会负责", "工作范围", "岗位介绍",
+    ];
+    // 要求类标题 —— 描述任职条件
+    const reqHeadings = [
+      "职位要求", "任职要求", "任职资格", "岗位要求",
+      "工作要求", "任职条件", "资格要求", "应聘条件",
+      "招聘要求", "岗位需求", "职位需求",
+    ];
+
+    function findFirst(patterns, text) {
+      let best = null;
+      for (const p of patterns) {
+        const idx = text.indexOf(p);
+        if (idx >= 0 && (best === null || idx < best.index)) {
+          best = { index: idx, heading: p, length: p.length };
+        }
+      }
+      return best;
+    }
+
+    /** 截断尾部无关内容（福利、公司介绍等） */
+    function cutTail(s) {
+      if (!s) return "";
+      const m = s.search(endSection);
+      if (m >= 0) s = s.slice(0, m).trim();
+      if (s.length > 45000) s = s.slice(0, 45000);
+      return s;
+    }
+
+    /** 从匹配位置开始，跳过标题文本和其后可能的分隔符/空白 */
+    function sliceAfter(match, text) {
+      const raw = text.slice(match.index + match.length);
+      const sep = raw.match(/^\s*[：:、\s]*/);
+      return raw.slice(sep ? sep[0].length : 0).trim();
+    }
+
+    const duty = findFirst(dutyHeadings, t);
+    const req = findFirst(reqHeadings, t);
 
     let bodyDesc = "";
     let bodyReq = "";
 
-    if (iDesc >= 0 && iReq >= 0 && iReq > iDesc) {
-      const headD = t.slice(iDesc);
-      const mD = headD.match(/^职位描述\s*/);
-      const startD = iDesc + (mD ? mD[0].length : 4);
-      bodyDesc = t.slice(startD, iReq).trim();
-      const headR = t.slice(iReq);
-      const mR = headR.match(/^职位要求\s*/);
-      const startR = iReq + (mR ? mR[0].length : 4);
-      bodyReq = t.slice(startR).trim();
-    } else if (iDesc >= 0) {
-      const headD = t.slice(iDesc);
-      const mD = headD.match(/^职位描述\s*/);
-      const startD = iDesc + (mD ? mD[0].length : 4);
-      const rest = t.slice(startD);
-      const ir2 = rest.indexOf("职位要求");
-      if (ir2 >= 0) {
-        bodyDesc = rest.slice(0, ir2).trim();
-        const tail = rest.slice(ir2);
-        const mR = tail.match(/^职位要求\s*/);
-        bodyReq = tail.slice(mR ? mR[0].length : 4).trim();
+    if (duty && req) {
+      if (req.index > duty.index) {
+        // 正常顺序：职责在前，要求在后
+        bodyDesc = t.slice(duty.index + duty.length, req.index).trim();
+        bodyReq = sliceAfter(req, t);
       } else {
-        bodyDesc = rest.trim();
+        // 少数网站顺序相反：要求在前，职责在后
+        bodyReq = t.slice(req.index + req.length, duty.index).trim();
+        bodyDesc = sliceAfter(duty, t);
       }
-    } else if (iReq >= 0) {
-      const headR = t.slice(iReq);
-      const mR = headR.match(/^职位要求\s*/);
-      bodyReq = t.slice(iReq + (mR ? mR[0].length : 4)).trim();
-    }
-
-    function cutTail(s) {
-      if (!s) return "";
-      let x = s;
-      const m = x.search(endSection);
-      if (m >= 0) x = x.slice(0, m).trim();
-      if (x.length > 45000) x = x.slice(0, 45000);
-      return x;
+    } else if (duty) {
+      // 只有职责标题，继续在后文中找要求标题
+      const afterDuty = t.slice(duty.index + duty.length);
+      const req2 = findFirst(reqHeadings, afterDuty);
+      if (req2) {
+        bodyDesc = afterDuty.slice(0, req2.index).trim();
+        bodyReq = afterDuty.slice(req2.index + req2.length).trim();
+      } else {
+        bodyDesc = afterDuty.trim();
+      }
+    } else if (req) {
+      bodyReq = sliceAfter(req, t);
     }
 
     bodyDesc = cutTail(bodyDesc);
@@ -279,9 +305,10 @@ function extractJobPageData() {
 
   if (!position || isBadTitle(position)) {
     const segs = pageTitle.split(/[\-|–—|｜]/).map(clean).filter(Boolean);
-    for (const seg of segs) {
-      if (!isBadTitle(seg)) {
-        position = seg;
+    // 从右往左取：公司名通常在左，岗位名通常在右
+    for (let i = segs.length - 1; i >= 0; i--) {
+      if (!isBadTitle(segs[i])) {
+        position = segs[i];
         break;
       }
     }
@@ -291,9 +318,44 @@ function extractJobPageData() {
     position = clean(pageTitle.split(/[-|–—|｜]/)[0]) || pageTitle;
   }
 
+  // 如果 position 来自 pageTitle 切分、company 仍为空，把前面的分段当作公司名
+  if (!company && position && !isBadTitle(position)) {
+    const segs = pageTitle.split(/[\-|–—|｜]/).map(clean).filter(Boolean);
+    for (const seg of segs) {
+      if (seg !== position && !isBadTitle(seg) && seg.length < 20 && !company) {
+        // 职位名通常包含「实习生」「工程师」「经理」等关键词，公司名不含
+        if (!/实习生|工程师|经理|专员|运营|设计|开发|实习|校招|社招|招聘|职位/i.test(seg)) {
+          company = seg;
+          break;
+        }
+      }
+    }
+  }
+
   if (!company) {
     const og = document.querySelector('meta[property="og:site_name"]');
     if (og && og.content) company = clean(og.content);
+  }
+  if (!company) {
+    const companySelectors = [
+      '[class*="company-name"]',
+      '[class*="companyName"]',
+      '[class*="company_name"]',
+      '[class*="recruit-company"]',
+      '[class*="recruitCompany"]',
+      '[class*="job-company"]',
+      '[class*="jobCompany"]',
+      '[class*="corporation-name"]',
+      '[class*="organization-name"]',
+    ];
+    for (const sel of companySelectors) {
+      const el = document.querySelector(sel);
+      const tx = textFrom(el);
+      if (tx && tx.length < 50) {
+        company = tx;
+        break;
+      }
+    }
   }
 
   function collectDetailText() {
