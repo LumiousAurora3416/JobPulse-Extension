@@ -294,10 +294,14 @@ function extractJobPageData() {
       const nodes = document.querySelectorAll(tag);
       for (const node of nodes) {
         const tx = textFrom(node);
-        if (tx && !isBadTitle(tx)) {
-          position = tx;
-          break;
+        if (!tx || isBadTitle(tx)) continue;
+        // 短文本且无岗位关键词 → 大概率是公司名，暂存并继续找真正的岗位名
+        if (tx.length <= 6 && !/工程师|经理|专员|运营|设计|开发|产品|算法|测试|销售|市场|实习|管培|顾问|分析师|技术员| intern|trainee|engineer|specialist|assistant|manager|consultant|analyst|developer/i.test(tx)) {
+          if (!company) company = tx;
+          continue;
         }
+        position = tx;
+        break;
       }
       if (position && !isBadTitle(position)) break;
     }
@@ -330,6 +334,12 @@ function extractJobPageData() {
         }
       }
     }
+  }
+
+  // 最后清洗：如果已提取到公司名、但 position 看起来仍是公司名，清掉留给用户手动填
+  if (position && company && !isBadTitle(position) && position.length <= 6 &&
+      !/工程师|经理|专员|运营|设计|开发|产品|算法|测试|销售|市场|实习|管培|顾问|分析师|技术员/i.test(position)) {
+    position = "";
   }
 
   if (!company) {
