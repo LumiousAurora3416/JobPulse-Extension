@@ -265,10 +265,12 @@ function extractJobPageData() {
     company = "腾讯";
   } else if (/bytedance|jobs\.feishu|larkjobs/.test(hostname) && !company) {
     company = "字节跳动";
+  } else if (/kuaishou/.test(hostname) && !company) {
+    company = "快手";
   }
 
-  if (/alibaba|campus-talent/.test(hostname) && (!position || isBadTitle(position))) {
-    const selectors = [
+  if (!position || isBadTitle(position)) {
+    const positionSelectors = [
       '[class*="positionTitle"]',
       '[class*="position-title"]',
       '[class*="PositionTitle"]',
@@ -278,8 +280,11 @@ function extractJobPageData() {
       '[class*="postTitle"]',
       '[class*="post-title"]',
       '[class*="name"][class*="position"]',
+      '[class*="recruit-title"]',
+      '[class*="job-name"]',
+      '[class*="position-name"]',
     ];
-    for (const sel of selectors) {
+    for (const sel of positionSelectors) {
       const el = document.querySelector(sel);
       const tx = textFrom(el);
       if (tx && !isBadTitle(tx)) {
