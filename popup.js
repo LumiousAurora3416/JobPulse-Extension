@@ -283,6 +283,7 @@ function extractJobPageData() {
       '[class*="recruit-title"]',
       '[class*="job-name"]',
       '[class*="position-name"]',
+      '[class*="title-name"]',
     ];
     for (const sel of positionSelectors) {
       const el = document.querySelector(sel);
