@@ -295,11 +295,31 @@ function extractJobPageData() {
   }
 
   if (!position || isBadTitle(position)) {
+    const segs = pageTitle.split(/[\-|–—|｜]/).map(clean).filter(Boolean);
+    // 对每个分段评分，选最像岗位名的那个（而非简单取最右）
+    let bestPos = "";
+    let bestScore = -1;
+    for (const s of segs) {
+      if (isBadTitle(s)) continue;
+      let score = s.length;
+      if (/工程师|经理|专员|运营|设计|开发|产品|算法|测试|销售|市场|实习|管培|顾问|分析师|技术员/i.test(s)) score += 30;
+      if (score > bestScore) { bestScore = score; bestPos = s; }
+    }
+    if (bestPos) position = bestPos;
+  }
+
+  if (!position || isBadTitle(position)) {
+    position = clean(pageTitle.split(/[-|–—|｜]/)[0]) || pageTitle;
+  }
+
+  if (!position || isBadTitle(position)) {
     for (const tag of ["h1", "h2"]) {
       const nodes = document.querySelectorAll(tag);
       for (const node of nodes) {
         const tx = textFrom(node);
         if (!tx || isBadTitle(tx)) continue;
+        // 跳过招聘类别标签（如「日常实习」「暑期实习」等）
+        if (/^(日常实习|暑期实习|寒假实习|周末实习|校园实习|提前批)$/.test(tx)) continue;
         // 短文本且无岗位关键词 → 大概率是公司名，暂存并继续找真正的岗位名
         if (tx.length <= 6 && !/工程师|经理|专员|运营|设计|开发|产品|算法|测试|销售|市场|实习|管培|顾问|分析师|技术员| intern|trainee|engineer|specialist|assistant|manager|consultant|analyst|developer/i.test(tx)) {
           if (!company) company = tx;
@@ -310,21 +330,6 @@ function extractJobPageData() {
       }
       if (position && !isBadTitle(position)) break;
     }
-  }
-
-  if (!position || isBadTitle(position)) {
-    const segs = pageTitle.split(/[\-|–—|｜]/).map(clean).filter(Boolean);
-    // 从右往左取：公司名通常在左，岗位名通常在右
-    for (let i = segs.length - 1; i >= 0; i--) {
-      if (!isBadTitle(segs[i])) {
-        position = segs[i];
-        break;
-      }
-    }
-  }
-
-  if (!position || isBadTitle(position)) {
-    position = clean(pageTitle.split(/[-|–—|｜]/)[0]) || pageTitle;
   }
 
   // 如果 position 来自 pageTitle 切分、company 仍为空，把前面的分段当作公司名
