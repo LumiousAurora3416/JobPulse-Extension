@@ -1,0 +1,35 @@
+name: JobPulse Agent
+
+on:
+  schedule:
+    # 每天早上 9:00 执行（UTC+8 = UTC 1:00）
+    - cron: "0 1 * * *"
+  workflow_dispatch:  # 手动触发
+
+jobs:
+  agent:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: 安装 Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      - name: 安装依赖
+        run: pip install -r agent/requirements.txt
+
+      - name: 执行投递追踪
+        env:
+          FEISHU_APP_ID: ${{ secrets.FEISHU_APP_ID }}
+          FEISHU_APP_SECRET: ${{ secrets.FEISHU_APP_SECRET }}
+          FEISHU_APP_TOKEN: ${{ secrets.FEISHU_APP_TOKEN }}
+          FEISHU_TABLE_ID: ${{ secrets.FEISHU_TABLE_ID }}
+          FEISHU_RECEIVER_ID: ${{ secrets.FEISHU_RECEIVER_ID }}
+          FEISHU_RECEIVER_TYPE: ${{ secrets.FEISHU_RECEIVER_TYPE }}
+          FEISHU_WEBHOOK: ${{ secrets.FEISHU_WEBHOOK }}
+          LLM_API_KEY: ${{ secrets.LLM_API_KEY }}
+          LLM_API_BASE: ${{ secrets.LLM_API_BASE }}
+          LLM_MODEL: ${{ secrets.LLM_MODEL }}
+        run: python agent/agent.py --full
