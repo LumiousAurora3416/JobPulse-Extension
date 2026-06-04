@@ -19,7 +19,7 @@ FEISHU_TABLE_ID = env("FEISHU_TABLE_ID", "YOUR_TABLE_ID")
 # 飞书用户/群组 ID（发消息给谁）
 # 可在飞书 Open API 调试台获取，或直接用 Webhook 地址
 # 如果填 "" 则尝试从 FEISHU_WEBHOOK 发送
-FEISHU_RECEIVER_ID = ""          # 飞书 user / open_id
+FEISHU_RECEIVER_ID = "YOUR_OPEN_ID"          # 飞书 user / open_id
 FEISHU_RECEIVER_TYPE = "open_id" # user_id | open_id | chat_id
 FEISHU_WEBHOOK = ""              # 群机器人 Webhook 地址（可选）
 
