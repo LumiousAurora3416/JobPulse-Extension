@@ -32,20 +32,46 @@ def follow_up_card(company: str, position: str, days: int, url: str, record_id: 
                 "actions": [
                     {
                         "tag": "button",
-                        "text": {"tag": "plain_text", "content": "✏️ 修改为面试"},
+                        "text": {"tag": "plain_text", "content": "✏️ 面试"},
                         "type": "primary",
                         "value": {"action": "update_status", "record_id": record_id, "status": "面试"},
-                        "confirm": {"title": {"tag": "plain_text", "content": "确认修改为面试？"}, "text": {"tag": "plain_text", "content": f"将 {company} - {position} 的状态更新为「面试」"}},
+                        "confirm": {"title": {"tag": "plain_text", "content": "确认修改为面试？"}, "text": {"tag": "plain_text", "content": f"将 {company} - {position} 更新为「面试」"}},
                     },
                     {
                         "tag": "button",
-                        "text": {"tag": "plain_text", "content": "❌ 修改为被拒/无反馈"},
+                        "text": {"tag": "plain_text", "content": "📋 无反馈"},
+                        "type": "default",
+                        "value": {"action": "update_status", "record_id": record_id, "status": "无反馈"},
+                        "confirm": {"title": {"tag": "plain_text", "content": "确认无反馈？"}, "text": {"tag": "plain_text", "content": f"标记 {company} - {position} 为「已跟进，暂无反馈」"}},
+                    },
+                    {
+                        "tag": "button",
+                        "text": {"tag": "plain_text", "content": "❌ 简历挂"},
                         "type": "danger",
-                        "value": {"action": "update_status", "record_id": record_id, "status": "被拒/无反馈"},
-                        "confirm": {"title": {"tag": "plain_text", "content": "确认无反馈？"}, "text": {"tag": "plain_text", "content": f"将 {company} - {position} 的状态更新为「被拒/无反馈」"}},
+                        "value": {"action": "update_status", "record_id": record_id, "status": "简历挂"},
+                        "confirm": {"title": {"tag": "plain_text", "content": "确认简历挂？"}, "text": {"tag": "plain_text", "content": f"将 {company} - {position} 更新为「简历挂」"}},
                     },
                 ],
             },
+        ],
+    }
+    return card
+
+
+def updated_card(company: str, position: str, new_status: str):
+    """按钮点击后返回的「已更新」卡片，替换原卡片"""
+    status_icon = {"面试": "✅", "无反馈": "📋", "简历挂": "❌"}
+    icon = status_icon.get(new_status, "✅")
+    card = {
+        "config": {"wide_screen_mode": True},
+        "header": {
+            "title": {"tag": "plain_text", "content": f"{icon} 状态已更新"},
+            "template": "green",
+        },
+        "elements": [
+            {"tag": "div", "text": {"tag": "lark_md", "content": f"**公司**：{company}\n**岗位**：{position}\n**状态**：{icon} {new_status}"}},
+            {"tag": "hr"},
+            {"tag": "div", "text": {"tag": "lark_md", "content": "📌 表格已自动更新，无需额外操作"}},
         ],
     }
     return card

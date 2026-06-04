@@ -25,6 +25,7 @@ from urllib.parse import urlparse
 # 添加父目录到路径，方便导入 feishu.py
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 from feishu import FeishuClient
+from cards import updated_card
 
 
 class CallbackHandler(BaseHTTPRequestHandler):
@@ -88,21 +89,41 @@ def handle_card_action(payload: dict) -> dict:
     client = FeishuClient()
 
     # 根据点击的按钮，更新「提醒状态」和「结果」
-    if new_status == "面试":
-        fields = {"提醒状态": "有反馈", "结果": "面试"}
-    elif new_status == "被拒/无反馈":
-        fields = {"提醒状态": "已失效", "结果": "无反馈"}
-    else:
-        fields = {"提醒状态": "已跟进"}
+    status_map = {
+        "面试": {"提醒状态": "有反馈", "结果": "面试"},
+        "无反馈": {"提醒状态": "已跟进", "结果": "无反馈"},
+        "简历挂": {"提醒状态": "已失效", "结果": "简历挂"},
+    }
+    fields = status_map.get(new_status, {"提醒状态": "已跟进"})
 
     ok = client.update_record(record_id, fields)
+
+    # 从原 payload 中提取卡片信息（公司、岗位名）
+    company = ""
+    position = ""
+    card_info = payload.get("card", {})
+    header = card_info.get("header", {})
+    if header:
+        content = header.get("title", {}).get("content", "")
+    elements = card_info.get("elements", [])
+    for el in elements:
+        fields_data = el.get("fields", [])
+        for f in fields_data:
+            md = f.get("text", {}).get("content", "")
+            if md.startswith("**公司**"):
+                company = md.replace("**公司**", "").strip()
+            if md.startswith("**岗位**"):
+                position = md.replace("**岗位**", "").strip()
+
     if ok:
         print(f"  ✅ 已更新记录 {record_id} → {new_status}")
         return {
             "code": 0,
             "msg": "success",
-            # 返回空卡片更新，飞书会自动关闭卡片的 loading 状态
-            "card": {"type": "template", "data": {"template_id": ""}},
+            "card": {
+                "type": "raw",
+                "data": updated_card(company, position, new_status),
+            },
         }
     else:
         print(f"  ❌ 更新记录失败")
