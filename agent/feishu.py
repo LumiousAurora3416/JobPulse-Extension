@@ -73,6 +73,20 @@ class FeishuClient:
             return False
         return True
 
+    def update_message_card(self, message_id: str, card: dict) -> bool:
+        """更新已发送消息的卡片内容"""
+        url = f"https://open.feishu.cn/open-apis/im/v1/messages/{message_id}"
+        body = {
+            "content": json.dumps(card, ensure_ascii=False),
+            "msg_type": "interactive",
+        }
+        resp = requests.patch(url, headers=self._headers(), json=body, timeout=10)
+        data = resp.json()
+        if data.get("code") != 0:
+            print(f"  ❌ 更新消息卡片失败 [{data.get('code')}]: {data.get('msg')}")
+            return False
+        return True
+
     # ── 发送消息卡片 ──────────────────────────────────────
 
     def send_card(self, receive_id: str, card: dict, receive_id_type: str = "open_id"):
@@ -106,7 +120,7 @@ class FeishuClient:
             return ""
         if isinstance(val, dict):
             # 链接字段: {"link": url, "text": text}
-            return val.get("text", val.get("link", ""))
+            return val.get("link", val.get("text", ""))
         if isinstance(val, list):
             # 多选/单选: [{"text": "选项名"}] 或 ["选项名"]
             texts = []
