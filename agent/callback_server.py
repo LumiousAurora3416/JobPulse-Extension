@@ -67,6 +67,8 @@ def handle_card_action(payload: dict) -> dict:
     new_status = value.get("status")
 
     print(f"  📩 收到回调: action={action_type}, record_id={record_id}, status={new_status}")
+    # 打印关键字段，排查 message_id 是否存在
+    print(f"  🔍 payload 字段: message_id={'有' if payload.get('message_id') else '无'}, open_id={'有' if payload.get('open_id') else '无'}, card={'有' if payload.get('card') else '无'}")
 
     if action_type != "update_status" or not record_id:
         return {"code": 400, "msg": "无效的回调参数"}
@@ -87,15 +89,27 @@ def handle_card_action(payload: dict) -> dict:
 
     print(f"  ✅ 已更新记录 {record_id} → {new_status}")
 
-    # 用 API 更新卡片消息内容（比回调响应内更新更可靠）
-    message_id = payload.get("message_id", "")
-    company = extract_card_field(payload, "公司")
-    position = extract_card_field(payload, "岗位")
-    new_card = updated_card(company, position, new_status)
-    if message_id:
-        client.update_message_card(message_id, new_card)
+    # 从本地存储中查找 message_id
+    store_path = os.path.join(os.path.dirname(__file__), "message_store.json")
+    message_id = ""
+    if os.path.exists(store_path):
+        try:
+            msg_store = json.load(open(store_path))
+            message_id = msg_store.get(record_id, "")
+        except (json.JSONDecodeError, OSError):
+            pass
 
-    # 回调响应仅确认成功
+    if message_id:
+        rec = client.get_record(record_id)
+        company = client.field_value(rec, "公司") if rec else ""
+        position = client.field_value(rec, "岗位") if rec else ""
+        new_card = updated_card(company, position, new_status)
+        print(f"  🔄 更新卡片 message_id={message_id[:20]}...")
+        card_ok = client.update_message_card(message_id, new_card)
+        print(f"  {'✅' if card_ok else '❌'} 卡片更新: {'成功' if card_ok else '失败'}")
+    else:
+        print(f"  ⚠️ 未找到 message_id，无法更新卡片")
+
     return {"code": 0}
 
 

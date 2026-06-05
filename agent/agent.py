@@ -11,6 +11,8 @@ JobPulse Agent — 求职追踪与归因分析
 """
 
 import argparse
+import json
+import os
 import sys
 import time
 from datetime import datetime, timezone, timedelta
@@ -80,6 +82,14 @@ def run_follow_up():
     print(f"  📋 {len(pending)} 条需要跟进")
 
     # 3. 发送跟进卡片
+    store_path = os.path.join(os.path.dirname(__file__), "message_store.json")
+    msg_store = {}
+    if os.path.exists(store_path):
+        try:
+            msg_store = json.load(open(store_path))
+        except (json.JSONDecodeError, OSError):
+            msg_store = {}
+
     notify_count = 0
     for rec, days in pending:
         company = client.field_value(rec, "公司")
@@ -89,10 +99,12 @@ def run_follow_up():
 
         card = follow_up_card(company, position, days, url, record_id)
 
+        msg_id = ""
         if FEISHU_WEBHOOK:
             ok = client.send_card_via_webhook(FEISHU_WEBHOOK, card)
         elif FEISHU_RECEIVER_ID:
-            ok = client.send_card(FEISHU_RECEIVER_ID, card, FEISHU_RECEIVER_TYPE)
+            msg_id = client.send_card(FEISHU_RECEIVER_ID, card, FEISHU_RECEIVER_TYPE)
+            ok = bool(msg_id)
         else:
             print("  ⚠️ 未配置 FEISHU_RECEIVER_ID 或 FEISHU_WEBHOOK，跳过发送")
             print(f"    调试：{company} - {position}（{days}天）")
@@ -101,7 +113,14 @@ def run_follow_up():
         if ok:
             notify_count += 1
             print(f"  ✅ {company} - {position}（{days}天）")
+            if msg_id and record_id:
+                msg_store[record_id] = msg_id
         time.sleep(0.3)  # 限速
+
+    # 保存 message_id 映射供回调使用
+    if msg_store:
+        json.dump(msg_store, open(store_path, "w"), ensure_ascii=False, indent=2)
+        print(f"  💾 已保存 {len(msg_store)} 条卡片消息映射")
 
     print(f"\n📨 已发送 {notify_count}/{len(pending)} 条提醒")
 

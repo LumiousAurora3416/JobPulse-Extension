@@ -63,6 +63,16 @@ class FeishuClient:
             page_token = data["data"].get("page_token")
         return records
 
+    def get_record(self, record_id: str) -> dict:
+        """获取单条记录"""
+        url = f"{self.BITABLE_URL}/{FEISHU_APP_TOKEN}/tables/{FEISHU_TABLE_ID}/records/{record_id}"
+        resp = requests.get(url, headers=self._headers(), timeout=10)
+        data = resp.json()
+        if data.get("code") != 0:
+            print(f"  ❌ 查询记录失败 [{data.get('code')}]: {data.get('msg')}")
+            return {}
+        return data.get("data", {}).get("record", {})
+
     def update_record(self, record_id: str, fields: dict) -> bool:
         """更新单条记录"""
         url = f"{self.BITABLE_URL}/{FEISHU_APP_TOKEN}/tables/{FEISHU_TABLE_ID}/records/{record_id}"
@@ -90,7 +100,7 @@ class FeishuClient:
     # ── 发送消息卡片 ──────────────────────────────────────
 
     def send_card(self, receive_id: str, card: dict, receive_id_type: str = "open_id"):
-        """发送消息卡片给指定用户"""
+        """发送消息卡片给指定用户，成功时返回 message_id"""
         url = f"https://open.feishu.cn/open-apis/im/v1/messages?receive_id_type={receive_id_type}"
         body = {
             "receive_id": receive_id,
@@ -101,8 +111,8 @@ class FeishuClient:
         data = resp.json()
         if data.get("code") != 0:
             print(f"  ❌ 发送卡片失败 [{data.get('code')}]: {data.get('msg')}")
-            return False
-        return True
+            return ""
+        return data.get("data", {}).get("message_id", "")
 
     def send_card_via_webhook(self, webhook_url: str, card: dict):
         """通过 Webhook 发送卡片到群（无交互回调）"""
