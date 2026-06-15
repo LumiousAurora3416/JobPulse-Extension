@@ -54,75 +54,79 @@ def run_follow_up():
     print("=" * 50)
     print(f"[{datetime.now():%Y-%m-%d %H:%M}] 追踪任务开始")
 
-    client = FeishuClient()
-
-    # 1. 获取所有记录
-    print("📡 查询飞书表格...")
     try:
-        records = client.list_records()
-    except RuntimeError as e:
-        print(f"  ❌ {e}")
-        return
-    print(f"  ✅ 共 {len(records)} 条记录")
+        client = FeishuClient()
 
-    # 2. 筛选需要提醒的记录
-    pending = []
-    for rec in records:
-        status = client.field_value(rec, "提醒状态")
-        if status not in ("", "待跟进"):
-            continue
-        days = get_days_since(rec, client)
-        if days >= 3 or (days == 0 and FOLLOW_UP_HOURS <= 72):
-            pending.append((rec, days))
-
-    if not pending:
-        print("  ✅ 没有需要跟进的记录")
-        return
-
-    print(f"  📋 {len(pending)} 条需要跟进")
-
-    # 3. 发送跟进卡片
-    store_path = os.path.join(os.path.dirname(__file__), "message_store.json")
-    msg_store = {}
-    if os.path.exists(store_path):
+        # 1. 获取所有记录
+        print("📡 查询飞书表格...")
         try:
-            msg_store = json.load(open(store_path))
-        except (json.JSONDecodeError, OSError):
-            msg_store = {}
+            records = client.list_records()
+        except RuntimeError as e:
+            print(f"  ❌ {e}")
+            return
+        print(f"  ✅ 共 {len(records)} 条记录")
 
-    notify_count = 0
-    for rec, days in pending:
-        company = client.field_value(rec, "公司")
-        position = client.field_value(rec, "岗位")
-        url = client.field_value(rec, "投递链接")
-        record_id = rec.get("record_id", "")
+        # 2. 筛选需要提醒的记录
+        pending = []
+        for rec in records:
+            status = client.field_value(rec, "提醒状态")
+            if status not in ("", "待跟进"):
+                continue
+            days = get_days_since(rec, client)
+            if days >= 3 or (days == 0 and FOLLOW_UP_HOURS <= 72):
+                pending.append((rec, days))
 
-        card = follow_up_card(company, position, days, url, record_id)
+        if not pending:
+            print("  ✅ 没有需要跟进的记录")
+            return
 
-        msg_id = ""
-        if FEISHU_WEBHOOK:
-            ok = client.send_card_via_webhook(FEISHU_WEBHOOK, card)
-        elif FEISHU_RECEIVER_ID:
-            msg_id = client.send_card(FEISHU_RECEIVER_ID, card, FEISHU_RECEIVER_TYPE)
-            ok = bool(msg_id)
-        else:
-            print("  ⚠️ 未配置 FEISHU_RECEIVER_ID 或 FEISHU_WEBHOOK，跳过发送")
-            print(f"    调试：{company} - {position}（{days}天）")
-            ok = True
+        print(f"  📋 {len(pending)} 条需要跟进")
 
-        if ok:
-            notify_count += 1
-            print(f"  ✅ {company} - {position}（{days}天）")
-            if msg_id and record_id:
-                msg_store[record_id] = msg_id
-        time.sleep(0.3)  # 限速
+        # 3. 发送跟进卡片
+        store_path = os.path.join(os.path.dirname(__file__), "message_store.json")
+        msg_store = {}
+        if os.path.exists(store_path):
+            try:
+                msg_store = json.load(open(store_path))
+            except (json.JSONDecodeError, OSError):
+                msg_store = {}
 
-    # 保存 message_id 映射供回调使用
-    if msg_store:
-        json.dump(msg_store, open(store_path, "w"), ensure_ascii=False, indent=2)
-        print(f"  💾 已保存 {len(msg_store)} 条卡片消息映射")
+        notify_count = 0
+        for rec, days in pending:
+            company = client.field_value(rec, "公司")
+            position = client.field_value(rec, "岗位")
+            url = client.field_value(rec, "投递链接")
+            record_id = rec.get("record_id", "")
 
-    print(f"\n📨 已发送 {notify_count}/{len(pending)} 条提醒")
+            card = follow_up_card(company, position, days, url, record_id)
+
+            msg_id = ""
+            if FEISHU_WEBHOOK:
+                ok = client.send_card_via_webhook(FEISHU_WEBHOOK, card)
+            elif FEISHU_RECEIVER_ID:
+                msg_id = client.send_card(FEISHU_RECEIVER_ID, card, FEISHU_RECEIVER_TYPE)
+                ok = bool(msg_id)
+            else:
+                print("  ⚠️ 未配置 FEISHU_RECEIVER_ID 或 FEISHU_WEBHOOK，跳过发送")
+                print(f"    调试：{company} - {position}（{days}天）")
+                ok = True
+
+            if ok:
+                notify_count += 1
+                print(f"  ✅ {company} - {position}（{days}天）")
+                if msg_id and record_id:
+                    msg_store[record_id] = msg_id
+            time.sleep(0.3)  # 限速
+
+        # 保存 message_id 映射供回调使用
+        if msg_store:
+            json.dump(msg_store, open(store_path, "w"), ensure_ascii=False, indent=2)
+            print(f"  💾 已保存 {len(msg_store)} 条卡片消息映射")
+
+        print(f"\n📨 已发送 {notify_count}/{len(pending)} 条提醒")
+    except Exception as e:
+        print(f"  ❌ 追踪任务异常: {e}")
+        raise
 
 
 def run_analysis():

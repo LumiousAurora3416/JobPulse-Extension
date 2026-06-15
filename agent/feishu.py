@@ -92,7 +92,10 @@ class FeishuClient:
             if page_token:
                 params["page_token"] = page_token
             url = f"{self.BITABLE_URL}/{FEISHU_APP_TOKEN}/tables/{FEISHU_TABLE_ID}/records"
-            resp = self._session.get(url, headers=self._headers(), params=params, timeout=15)
+            try:
+                resp = self._session.get(url, headers=self._headers(), params=params, timeout=30)
+            except requests.exceptions.RequestException as e:
+                raise RuntimeError(f"查询记录网络错误: {e}")
             data = resp.json()
             if data.get("code") != 0:
                 raise RuntimeError(f"查询记录失败: [{data.get('code')}] {data.get('msg')}")
