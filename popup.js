@@ -212,7 +212,7 @@ function extractJobPageData() {
   function isBadTitle(t) {
     const s = clean(t);
     if (!s || s.length > 120) return true;
-    return /^(阿里巴巴校园招聘|阿里校招|校园招聘|社会招聘|首页|登录|官方招聘|招聘官网|加入我们|职位详情|Alibaba Campus Recruitment|Campus Recruitment|Jobs|Home|Filter by)$/i.test(
+    return /^(阿里巴巴校园招聘|阿里校招|校园招聘|社会招聘|首页|登录|官方招聘|招聘官网|加入我们|职位详情|职位搜索|岗位详情|网易招聘|美团招聘|热招职位|全部职位|Alibaba Campus Recruitment|Campus Recruitment|Jobs|Home|Filter by|Search Results)$/i.test(
       s
     );
   }
@@ -267,12 +267,43 @@ function extractJobPageData() {
     company = "字节跳动";
   } else if (/kuaishou/.test(hostname) && !company) {
     company = "快手";
+  } else if (/hr\.163\.com/.test(hostname) && !company) {
+    company = "网易";
+  } else if (/zhaopin\.meituan/.test(hostname) && !company) {
+    company = "美团";
+  } else if (/mokahr\.com/.test(hostname) && !company) {
+    // mokahr: extract company slug from URL path
+    // e.g. campus_apply/ruijie/136206 → "ruijie" → map to Chinese name
+    const mokaMatch = location.pathname.match(/campus_apply\/([^/]+)/);
+    if (mokaMatch) {
+      const slugMap = {
+        ruijie: "锐捷", xiaomi: "小米", bilibili: "哔哩哔哩",
+        oppo: "OPPO", vivo: "vivo", lenovo: "联想",
+        huawei: "华为", bytedance: "字节跳动", didi: "滴滴",
+        jd: "京东", pdd: "拼多多", sf: "顺丰",
+        bankcomm: "交通银行", cmb: "招商银行", icbc: "工商银行",
+      };
+      company = slugMap[mokaMatch[1]] || mokaMatch[1];
+    }
   }
 
   if (!position || isBadTitle(position)) {
     const positionSelectors = [
-      '[class*="positionTitle"]',
+      // 网易 hr.163.com
+      '[class*="job-name"]',
+      '[class*="job-detail-title"]',
       '[class*="position-title"]',
+      // 美团 zhaopin.meituan.com
+      '[class*="PositionName"]',
+      '[class*="positionName"]',
+      '[class*="job-title-text"]',
+      '[class*="detail-title"]',
+      // mokahr campus_apply
+      '[class*="position-name"]',
+      '[class*="campus-position"]',
+      '[class*="campus-title"]',
+      // Generic fallbacks
+      '[class*="positionTitle"]',
       '[class*="PositionTitle"]',
       '[class*="jobTitle"]',
       '[class*="job-title"]',
@@ -281,9 +312,12 @@ function extractJobPageData() {
       '[class*="post-title"]',
       '[class*="name"][class*="position"]',
       '[class*="recruit-title"]',
-      '[class*="job-name"]',
-      '[class*="position-name"]',
       '[class*="title-name"]',
+      // Extra: h1 inside detail containers
+      '.job-detail h1',
+      '.position-detail h1',
+      '.position-detail h2',
+      '.job-detail-content h1',
     ];
     for (const sel of positionSelectors) {
       const el = document.querySelector(sel);
@@ -296,14 +330,15 @@ function extractJobPageData() {
   }
 
   if (!position || isBadTitle(position)) {
-    const segs = pageTitle.split(/[\-|–—|｜]/).map(clean).filter(Boolean);
-    // 对每个分段评分，选最像岗位名的那个（而非简单取最右）
+    // Split by common separators: -, |, –, —, ｜, _, ·, 「_」
+    const segs = pageTitle.split(/[\-|–—|｜_·「」]/).map(clean).filter(Boolean);
     let bestPos = "";
     let bestScore = -1;
     for (const s of segs) {
       if (isBadTitle(s)) continue;
       let score = s.length;
-      if (/工程师|经理|专员|运营|设计|开发|产品|算法|测试|销售|市场|实习|管培|顾问|分析师|技术员/i.test(s)) score += 30;
+      // Job title keywords boost score
+      if (/工程师|经理|专员|运营|设计|开发|产品|算法|测试|销售|市场|实习|管培|顾问|分析师|技术员|架构|数据|架构师|负责人|总监|主管|组长|专家|研究员|策划|编辑|编导|翻译|审核|运维|安全|后端|前端|全栈|iOS|Android|iOS|SRE|DBA|QA|HR|BP|CFO|CTO|COO|VP|Head|Lead|Principal|Staff|Senior|Junior|Intern|Trainee|Engineer|Specialist|Assistant|Manager|Consultant|Analyst|Developer|Architect|Director|VP/i.test(s)) score += 30;
       if (score > bestScore) { bestScore = score; bestPos = s; }
     }
     if (bestPos) position = bestPos;
@@ -359,9 +394,15 @@ function extractJobPageData() {
   }
   if (!company) {
     const companySelectors = [
+      // 美团
+      '[class*="CompanyName"]',
       '[class*="company-name"]',
       '[class*="companyName"]',
       '[class*="company_name"]',
+      // mokahr
+      '[class*="campus-company"]',
+      '[class*="campus-company-name"]',
+      // Generic fallbacks
       '[class*="recruit-company"]',
       '[class*="recruitCompany"]',
       '[class*="job-company"]',
