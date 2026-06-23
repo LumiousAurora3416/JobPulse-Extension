@@ -92,3 +92,74 @@ def analysis_card(summary: str, insights: list[str]):
         "elements": elements,
     }
     return card
+
+
+def stats_card(total: int, interview: int, pending: int, followed: int, lost: int):
+    """投递数据统计卡片"""
+    interview_rate = round(interview / total * 100, 1) if total else 0
+    pending_rate = round(pending / total * 100, 1) if total else 0
+    lost_rate = round(lost / total * 100, 1) if total else 0
+
+    card = {
+        "config": {"wide_screen_mode": True},
+        "header": {
+            "title": {"tag": "plain_text", "content": "📈 投递数据统计"},
+            "template": "blue",
+        },
+        "elements": [
+            {
+                "tag": "div",
+                "fields": [
+                    {"is_short": True, "text": {"tag": "lark_md", "content": f"**总投递数**\n{total}"}},
+                    {"is_short": True, "text": {"tag": "lark_md", "content": f"**面试**\n{interview} ({interview_rate}%)"}},
+                ],
+            },
+            {
+                "tag": "div",
+                "fields": [
+                    {"is_short": True, "text": {"tag": "lark_md", "content": f"**待跟进**\n{pending} ({pending_rate}%)"}},
+                    {"is_short": True, "text": {"tag": "lark_md", "content": f"**已失效**\n{lost} ({lost_rate}%)"}},
+                ],
+            },
+            {"tag": "hr"},
+            {"tag": "div", "text": {"tag": "lark_md", "content": f"已跟进：{followed} | 转化率：{interview_rate}%"}},
+        ],
+    }
+    return card
+
+
+def interview_reminder_card(company: str, position: str, interview_date: str, location: str = ""):
+    """面试日程提醒卡片"""
+    card = {
+        "config": {"wide_screen_mode": True},
+        "header": {
+            "title": {"tag": "plain_text", "content": "⏰ 面试提醒"},
+            "template": "orange",
+        },
+        "elements": [
+            {"tag": "div", "text": {"tag": "lark_md", "content": f"**公司**：{company}\n**岗位**：{position}\n**时间**：{interview_date}" + (f"\n**地点**：{location}" if location else "")}},
+            {"tag": "hr"},
+            {"tag": "div", "text": {"tag": "lark_md", "content": "祝面试顺利！"}},
+        ],
+    }
+    return card
+
+
+def rejection_insight_card(company: str, position: str, insights: list[str]):
+    """拒信归因洞察卡片"""
+    elements = [
+        {"tag": "div", "text": {"tag": "lark_md", "content": f"**公司**：{company}　|　**岗位**：{position}"}},
+        {"tag": "hr"},
+    ]
+    for tip in insights:
+        elements.append({"tag": "div", "text": {"tag": "lark_md", "content": f"• {tip}"}})
+
+    card = {
+        "config": {"wide_screen_mode": True},
+        "header": {
+            "title": {"tag": "plain_text", "content": "🔍 拒信归因分析"},
+            "template": "red",
+        },
+        "elements": elements,
+    }
+    return card

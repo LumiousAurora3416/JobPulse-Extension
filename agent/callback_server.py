@@ -89,20 +89,23 @@ def handle_card_action(payload: dict) -> dict:
 
     print(f"  ✅ 已更新记录 {record_id} → {new_status}")
 
-    # 从本地存储中查找 message_id
-    store_path = os.path.join(os.path.dirname(__file__), "message_store.json")
-    message_id = ""
-    if os.path.exists(store_path):
-        try:
-            msg_store = json.load(open(store_path))
-            message_id = msg_store.get(record_id, "")
-        except (json.JSONDecodeError, OSError):
-            pass
+    # 获取记录详情，优先从飞书表格"消息ID"字段读取 message_id
+    rec = client.get_record(record_id)
+    company = client.field_value(rec, "公司") if rec else ""
+    position = client.field_value(rec, "岗位") if rec else ""
+    message_id = client.field_value(rec, "消息ID") if rec else ""
+
+    # fallback: 本地 message_store.json
+    if not message_id:
+        store_path = os.path.join(os.path.dirname(__file__), "message_store.json")
+        if os.path.exists(store_path):
+            try:
+                msg_store = json.load(open(store_path))
+                message_id = msg_store.get(record_id, "")
+            except (json.JSONDecodeError, OSError):
+                pass
 
     if message_id:
-        rec = client.get_record(record_id)
-        company = client.field_value(rec, "公司") if rec else ""
-        position = client.field_value(rec, "岗位") if rec else ""
         new_card = updated_card(company, position, new_status)
         print(f"  🔄 更新卡片 message_id={message_id[:20]}...")
         card_ok = client.update_message_card(message_id, new_card)

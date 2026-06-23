@@ -26,11 +26,12 @@ from config import (
     LLM_API_KEY,
 )
 from feishu import FeishuClient
-from cards import follow_up_card, analysis_card
+from cards import follow_up_card, analysis_card, stats_card, interview_reminder_card
 
 
 def get_days_since(record: dict, client: FeishuClient) -> int:
-    """从投递天数字段获取天数，或根据_record_id中的创建时间估算"""
+    """从投递天数字段获取天数，或根据 record 创建时间估算。
+    无法确定时返回 999（宁可多提醒不漏提醒）"""
     formula_val = client.field_value(record, "投递天数")
     if formula_val and formula_val.replace(".", "").isdigit():
         return int(float(formula_val))
@@ -46,7 +47,7 @@ def get_days_since(record: dict, client: FeishuClient) -> int:
             return (datetime.now(timezone.utc) - dt).days
         except (ValueError, OSError):
             pass
-    return 0
+    return 999  # fallback: 无法确定天数时默认需要跟进
 
 
 def run_follow_up():
@@ -73,7 +74,8 @@ def run_follow_up():
             if status not in ("", "待跟进"):
                 continue
             days = get_days_since(rec, client)
-            if days >= 3 or (days == 0 and FOLLOW_UP_HOURS <= 72):
+            threshold_days = FOLLOW_UP_HOURS / 24
+            if days >= threshold_days:
                 pending.append((rec, days))
 
         if not pending:
@@ -116,6 +118,8 @@ def run_follow_up():
                 print(f"  ✅ {company} - {position}（{days}天）")
                 if msg_id and record_id:
                     msg_store[record_id] = msg_id
+                    # 同时写入飞书表格，回调时可直接从记录读取
+                    client.update_record(record_id, {"消息ID": msg_id})
             time.sleep(0.3)  # 限速
 
         # 保存 message_id 映射供回调使用
@@ -218,13 +222,131 @@ def run_analysis():
         print(f"  ❌ LLM 分析失败: {e}")
 
 
+def run_statistics():
+    """数据统计：统计投递总量、面试数、待跟进数等，发送统计卡片"""
+    print("=" * 50)
+    print(f"[{datetime.now():%Y-%m-%d %H:%M}] 数据统计任务开始")
+
+    client = FeishuClient()
+    try:
+        records = client.list_records()
+    except RuntimeError as e:
+        print(f"  ❌ {e}")
+        return
+
+    total = len(records)
+    if total == 0:
+        print("  ⚠️ 表格为空，无数据可统计")
+        return
+
+    # Count by status
+    interview = 0
+    pending = 0
+    followed = 0
+    lost = 0
+
+    for rec in records:
+        status = client.field_value(rec, "结果")
+        remind = client.field_value(rec, "提醒状态")
+        if status == "面试":
+            interview += 1
+        if remind == "待跟进":
+            pending += 1
+        if remind == "已跟进":
+            followed += 1
+        if remind in ("已失效", "被拒/无反馈"):
+            lost += 1
+
+    print(f"  📊 投递 {total} | 面试 {interview} | 待跟进 {pending} | 已跟进 {followed} | 已失效 {lost}")
+
+    card = stats_card(total, interview, pending, followed, lost)
+
+    if FEISHU_RECEIVER_ID:
+        ok = client.send_card(FEISHU_RECEIVER_ID, card, FEISHU_RECEIVER_TYPE)
+        if ok:
+            print("  ✅ 统计卡片已发送")
+        else:
+            print("  ❌ 统计卡片发送失败")
+    elif FEISHU_WEBHOOK:
+        ok = client.send_card_via_webhook(FEISHU_WEBHOOK, card)
+        if ok:
+            print("  ✅ 统计卡片已发送")
+        else:
+            print("  ❌ 统计卡片发送失败")
+    else:
+        print(f"\n📈 统计预览：投递 {total} | 面试 {interview} ({interview / total * 100:.1f}%) | 待跟进 {pending} | 已失效 {lost}")
+
+
+def run_interview_reminder():
+    """面试日程提醒：查询面试时间在未来1-2天的记录，发送提醒卡片"""
+    print("=" * 50)
+    print(f"[{datetime.now():%Y-%m-%d %H:%M}] 面试提醒任务开始")
+
+    client = FeishuClient()
+    try:
+        records = client.list_records()
+    except RuntimeError as e:
+        print(f"  ❌ {e}")
+        return
+
+    # 筛选有面试时间的记录
+    upcoming = []
+    for rec in records:
+        interview_date = client.field_value(rec, "面试时间")
+        if not interview_date:
+            continue
+        try:
+            # 飞书日期格式通常是 "YYYY-MM-DD" 或时间戳
+            dt = None
+            if isinstance(interview_date, (int, float)):
+                dt = datetime.fromtimestamp(int(interview_date) / 1000, tz=timezone.utc)
+            elif isinstance(interview_date, str):
+                dt = datetime.strptime(interview_date, "%Y-%m-%d")
+            else:
+                dt = datetime.fromisoformat(str(interview_date).replace("Z", "+00:00"))
+
+            days_diff = (dt.date() - datetime.now(timezone.utc).date()).days
+            if 0 <= days_diff <= 2:
+                company = client.field_value(rec, "公司")
+                position = client.field_value(rec, "岗位")
+                upcoming.append({
+                    "company": company,
+                    "position": position,
+                    "date": interview_date,
+                    "days": days_diff,
+                })
+        except (ValueError, OSError):
+            continue
+
+    if not upcoming:
+        print("  ✅ 没有即将到来的面试")
+        return
+
+    print(f"  📅 发现 {len(upcoming)} 个即将面试")
+
+    for item in upcoming:
+        card = interview_reminder_card(item["company"], item["position"], str(item["date"]))
+        if FEISHU_RECEIVER_ID:
+            client.send_card(FEISHU_RECEIVER_ID, card, FEISHU_RECEIVER_TYPE)
+        elif FEISHU_WEBHOOK:
+            client.send_card_via_webhook(FEISHU_WEBHOOK, card)
+        else:
+            print(f"  ⏰ {item['company']} - {item['position']} @ {item['date']}（{item['days']}天后）")
+        time.sleep(0.3)
+
+    print(f"  ✅ 已发送 {len(upcoming)} 条面试提醒")
+
+
 def main():
     parser = argparse.ArgumentParser(description="JobPulse Agent")
     parser.add_argument("--full", action="store_true", help="执行追踪 + 分析")
     parser.add_argument("--analyze", action="store_true", help="仅执行归因分析")
+    parser.add_argument("--stats", action="store_true", help="仅执行数据统计")
     args = parser.parse_args()
 
-    if args.analyze:
+    if args.stats:
+        run_statistics()
+    elif args.analyze:
         run_analysis()
     elif args.full:
         run_follow_up()
