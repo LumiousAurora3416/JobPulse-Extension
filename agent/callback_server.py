@@ -12,6 +12,7 @@
 import json
 import os
 import sys
+import threading
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 from feishu import FeishuClient
@@ -39,11 +40,17 @@ def json_resp(data: dict, status=200):
 def callback():
     payload = request.get_json(force=True, silent=True) or {}
 
-    # 飞书 URL 挑战验证
+    # 1. 飞书 URL 挑战验证（Event Subscription 配置时触发）
     if "challenge" in payload:
         return json_resp({"challenge": payload["challenge"]})
 
-    # 处理卡片按钮回调
+    # 2. 事件订阅（消息事件等）
+    if "header" in payload:
+        handle_event(payload)
+        # Event subscription expects a quick 200 with code:0
+        return json_resp({"code": 0})
+
+    # 3. 卡片按钮回调
     result = handle_card_action(payload)
     return json_resp(result)
 
@@ -114,6 +121,76 @@ def handle_card_action(payload: dict) -> dict:
         print(f"  ⚠️ 未找到 message_id，无法更新卡片")
 
     return {"code": 0}
+
+
+def handle_event(payload: dict):
+    """Handle Feishu event subscription events."""
+    header = payload.get("header", {})
+    event_type = header.get("event_type", "")
+    print(f"  📩 收到事件: {event_type}")
+
+    if event_type == "im.message.receive_v1":
+        handle_message_event(payload.get("event", {}))
+
+
+def handle_message_event(event: dict):
+    """Handle incoming user message event (im.message.receive_v1)."""
+    sender = event.get("sender", {})
+    message = event.get("message", {})
+
+    chat_type = message.get("chat_type", "")
+    message_type = message.get("message_type", "")
+
+    # Only handle private chat text messages
+    if chat_type != "private" or message_type != "text":
+        return
+
+    sender_id_obj = sender.get("sender_id", {})
+    open_id = sender_id_obj.get("open_id", "")
+    if not open_id:
+        return
+
+    content_str = message.get("content", "{}")
+    try:
+        content = json.loads(content_str)
+        text = content.get("text", "").strip()
+    except (json.JSONDecodeError, TypeError):
+        return
+
+    if not text:
+        return
+
+    print(f"  💬 用户消息 from {open_id}: {text}")
+
+    # Process in background thread so webhook returns immediately
+    thread = threading.Thread(
+        target=handle_bot_message,
+        args=(open_id, text),
+        daemon=True,
+    )
+    thread.start()
+
+
+def handle_bot_message(open_id: str, text: str):
+    """Route user message to message_agent for processing."""
+    try:
+        # Check LLM API key before proceeding
+        from config import LLM_API_KEY
+        if not LLM_API_KEY:
+            client = FeishuClient()
+            client.send_text(
+                open_id,
+                "🤖 管理员还未配置 LLM API Key，暂时无法处理消息",
+            )
+            return
+
+        from message_agent import handle_message
+        handle_message(open_id, text)
+
+    except Exception as e:
+        print(f"  ❌ 处理消息出错: {e}")
+        import traceback
+        traceback.print_exc()
 
 
 def extract_card_field(payload: dict, field_name: str) -> str:

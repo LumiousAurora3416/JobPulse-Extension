@@ -126,6 +126,16 @@ class FeishuClient:
             return False
         return True
 
+    def create_record(self, fields: dict) -> str:
+        """创建新记录，返回 record_id"""
+        url = f"{self.BITABLE_URL}/{FEISHU_APP_TOKEN}/tables/{FEISHU_TABLE_ID}/records"
+        resp = self._session.post(url, headers=self._headers(), json={"fields": fields}, timeout=10)
+        data = resp.json()
+        if data.get("code") != 0:
+            print(f"  ❌ 创建记录失败 [{data.get('code')}]: {data.get('msg')}")
+            return ""
+        return data.get("data", {}).get("record", {}).get("record_id", "")
+
     def update_message_card(self, message_id: str, card: dict) -> bool:
         """更新已发送消息的卡片内容"""
         url = f"https://open.feishu.cn/open-apis/im/v1/messages/{message_id}"
@@ -161,6 +171,25 @@ class FeishuClient:
         """通过 Webhook 发送卡片到群（无交互回调）"""
         resp = self._session.post(webhook_url, json={"msg_type": "interactive", "card": card}, timeout=10)
         return resp.status_code == 200
+
+    def send_text(self, receive_id: str, text: str, receive_id_type: str = "open_id") -> bool:
+        """发送纯文本消息给用户"""
+        url = f"https://open.feishu.cn/open-apis/im/v1/messages?receive_id_type={receive_id_type}"
+        body = {
+            "receive_id": receive_id,
+            "msg_type": "text",
+            "content": json.dumps({"text": text}, ensure_ascii=False),
+        }
+        try:
+            resp = self._session.post(url, headers=self._headers(), json=body, timeout=10)
+            data = resp.json()
+            if data.get("code") != 0:
+                print(f"  ❌ 发送文本消息失败 [{data.get('code')}]: {data.get('msg')}")
+                return False
+            return True
+        except requests.exceptions.RequestException as e:
+            print(f"  ❌ 发送文本消息网络错误: {e}")
+            return False
 
     # ── 字段值提取工具 ──────────────────────────────────
 
