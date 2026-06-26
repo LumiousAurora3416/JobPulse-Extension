@@ -142,7 +142,8 @@ def handle_message_event(event: dict):
     message_type = message.get("message_type", "")
 
     # Only handle private chat text messages
-    if chat_type != "private" or message_type != "text":
+    # Feishu v2 event uses "p2p", some older versions use "private"
+    if chat_type not in ("private", "p2p") or message_type != "text":
         return
 
     sender_id_obj = sender.get("sender_id", {})
