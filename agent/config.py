@@ -23,10 +23,10 @@ FEISHU_RECEIVER_ID = "YOUR_OPEN_ID"          # 飞书 user / open_id
 FEISHU_RECEIVER_TYPE = "open_id" # user_id | open_id | chat_id
 FEISHU_WEBHOOK = ""              # 群机器人 Webhook 地址（可选）
 
-# ========== LLM 配置（BYOK） ==========
-LLM_API_KEY = ""          # 你的 API Key
-LLM_API_BASE = "https://api.openai.com/v1"  # 兼容 OpenAI 格式的接口
-LLM_MODEL = "gpt-4o"      # 模型名
+# ========== LLM 配置（BYOK，均可通过环境变量覆盖） ==========
+LLM_API_KEY = env("LLM_API_KEY", "")                           # 你的 API Key
+LLM_API_BASE = env("LLM_API_BASE", "https://api.openai.com/v1")  # 兼容 OpenAI 格式的接口
+LLM_MODEL = env("LLM_MODEL", "gpt-4o")                           # 模型名
 # 如果你用 Claude API，可改为：
 # LLM_API_BASE = "https://api.anthropic.com/v1"
 # LLM_MODEL = "claude-sonnet-4-20250514"

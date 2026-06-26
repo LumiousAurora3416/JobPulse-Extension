@@ -176,11 +176,7 @@ def handle_bot_message(open_id: str, text: str):
     """Route user message to message_agent for processing."""
     try:
         # Check LLM API key before proceeding
-        import os
-        print(f"  🔍 DEBUG: LLM_API_KEY env = '{os.environ.get('LLM_API_KEY', '<NOT SET>')}'")
-        print(f"  🔍 DEBUG: LLM_API_KEY type = {type(os.environ.get('LLM_API_KEY', ''))}")
         from config import LLM_API_KEY
-        print(f"  🔍 DEBUG: config.LLM_API_KEY = '{LLM_API_KEY}' (len={len(LLM_API_KEY)})")
         if not LLM_API_KEY:
             client = FeishuClient()
             client.send_text(
