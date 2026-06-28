@@ -271,6 +271,12 @@ function extractJobPageData() {
     company = "网易";
   } else if (/zhaopin\.meituan/.test(hostname) && !company) {
     company = "美团";
+  } else if (/zhipin\.com/.test(hostname) && !company) {
+    // BOSS直聘: try DOM selectors, fallback to page title parsing
+    var zhipinCompany = document.querySelector("a.company-name");
+    if (!zhipinCompany) zhipinCompany = document.querySelector(".company-info a");
+    if (!zhipinCompany) zhipinCompany = document.querySelector('[class*="company"] a');
+    if (zhipinCompany) company = clean(zhipinCompany.textContent);
   } else if (/mokahr\.com/.test(hostname) && !company) {
     // mokahr: extract company slug from URL path
     // e.g. campus_apply/ruijie/136206 → "ruijie" → map to Chinese name
@@ -289,6 +295,12 @@ function extractJobPageData() {
 
   if (!position || isBadTitle(position)) {
     const positionSelectors = [
+      // BOSS直聘 zhipin.com
+      "div.name > h1",
+      "div.job-name > h1",
+      ".job-title > h1",
+      "div.job-detail-header h1",
+      '[class*="job-detail"] h1',
       // 网易 hr.163.com
       '[class*="job-name"]',
       '[class*="job-detail-title"]',
@@ -420,6 +432,26 @@ function extractJobPageData() {
     }
   }
 
+  /** CSS hidden text filter: remove interference text injected by sites like zhipin.com */
+  function filterHiddenText(root) {
+    var clone = root.cloneNode(true);
+    var allEls = clone.querySelectorAll("*");
+    for (var i = allEls.length - 1; i >= 0; i--) {
+      var el = allEls[i];
+      var cs = getComputedStyle(el);
+      if (
+        cs.display === "none" ||
+        cs.visibility === "hidden" ||
+        parseFloat(cs.opacity) === 0 ||
+        parseFloat(cs.fontSize) === 0 ||
+        (cs.width === "0px" && cs.height === "0px")
+      ) {
+        el.parentNode && el.parentNode.removeChild(el);
+      }
+    }
+    return textFrom(clone);
+  }
+
   function collectDetailText() {
     const jdSelectors = [
       '[class*="job-detail"]',
@@ -478,11 +510,46 @@ function extractJobPageData() {
 
   if (jd.length > 45000) jd = jd.slice(0, 45000);
 
+  // BOSS直聘: apply CSS hidden text filter to remove interference text
+  var isZhipin = /zhipin\.com/.test(hostname);
+  if (isZhipin && jd) {
+    var tmpDiv = document.createElement("div");
+    tmpDiv.innerHTML = jd;
+    jd = filterHiddenText(tmpDiv);
+  }
+
+  // Salary extraction (zhipin displays it prominently, try on all sites)
+  var salary = "";
+  var salarySelectors = [
+    "span.salary",
+    ".job-salary",
+    "[class*='salary']",
+    ".salary-text",
+  ];
+  for (var si = 0; si < salarySelectors.length; si++) {
+    var salaryEl = document.querySelector(salarySelectors[si]);
+    if (salaryEl) {
+      salary = clean(salaryEl.textContent);
+      break;
+    }
+  }
+  // zhipin: also try from page title segments (e.g. "15k-25k")
+  if (!salary && isZhipin) {
+    var titleSegs = pageTitle.split(/[\-|–—|｜]/).map(clean).filter(Boolean);
+    for (var ts = 0; ts < titleSegs.length; ts++) {
+      if (/\d+k/i.test(titleSegs[ts]) || /\d+-\d+k/i.test(titleSegs[ts])) {
+        salary = titleSegs[ts];
+        break;
+      }
+    }
+  }
+
   return {
     position: posClean,
     company: clean(company),
     jd,
     pageTitle,
+    salary: salary,
   };
 }
 
@@ -504,6 +571,7 @@ async function fillFromPage() {
   const companyEl = document.getElementById("company");
   const urlEl = document.getElementById("applyUrl");
   const jdEl = document.getElementById("jobDesc");
+  const salaryEl = document.getElementById("salary");
 
   const tabs = await chrome.tabs.query({ active: true, currentWindow: true });
   const tab = tabs && tabs[0];
@@ -528,6 +596,7 @@ async function fillFromPage() {
     companyEl.value = "";
     jdEl.value = "";
     urlEl.value = "";
+    if (salaryEl) salaryEl.value = "";
     return;
   }
 
@@ -538,6 +607,7 @@ async function fillFromPage() {
     positionEl.value = data.position || "";
     companyEl.value = data.company || "";
     jdEl.value = data.jd || "";
+    if (salaryEl) salaryEl.value = data.salary || "";
     hideMessage();
     if (
       !data.position ||
@@ -556,6 +626,7 @@ async function fillFromPage() {
     positionEl.value = tab.title || "";
     companyEl.value = "";
     jdEl.value = "";
+    if (salaryEl) salaryEl.value = "";
   }
 }
 
@@ -576,6 +647,8 @@ document.addEventListener("DOMContentLoaded", () => {
     const jobDesc = document.getElementById("jobDesc").value.trim();
     const applyUrl = document.getElementById("applyUrl").value.trim();
     const result = document.getElementById("result").value;
+    const salaryEl = document.getElementById("salary");
+    const salary = salaryEl ? salaryEl.value.trim() : "";
 
     if (!position) {
       showMessage("请填写岗位名称", false);
@@ -600,6 +673,7 @@ document.addEventListener("DOMContentLoaded", () => {
       },
       结果: result,
     };
+    if (salary) fields["薪资"] = salary;
 
     setLoading(true);
     try {

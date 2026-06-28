@@ -1,0 +1,166 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>JobPulse 数据看板</title>
+  <style>
+    :root {
+      --blue: #3370ff;
+      --blue-light: #e8f0ff;
+      --green: #0d7a3e;
+      --green-light: #e8ffea;
+      --orange: #d46b08;
+      --orange-light: #fff7e6;
+      --red: #d83931;
+      --red-light: #fff2f0;
+      --text: #1f2329;
+      --text-secondary: #646a73;
+      --border: #dee0e3;
+      --bg: #f5f7fa;
+      --white: #fff;
+      --radius: 8px;
+      --shadow: 0 1px 4px rgba(31,35,41,0.08);
+    }
+    * { box-sizing: border-box; margin: 0; padding: 0; }
+    body {
+      font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, "PingFang SC", "Microsoft YaHei", sans-serif;
+      font-size: 14px;
+      color: var(--text);
+      background: var(--bg);
+      min-height: 100vh;
+    }
+    .header {
+      background: var(--white);
+      border-bottom: 1px solid var(--border);
+      padding: 16px 24px;
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      box-shadow: var(--shadow);
+    }
+    .header h1 { font-size: 18px; font-weight: 600; }
+    .header .refresh {
+      font-size: 12px;
+      color: var(--text-secondary);
+    }
+    .container { max-width: 960px; margin: 0 auto; padding: 24px; }
+    .stats-row {
+      display: grid;
+      grid-template-columns: repeat(4, 1fr);
+      gap: 16px;
+      margin-bottom: 24px;
+    }
+    .stat-card {
+      background: var(--white);
+      border-radius: var(--radius);
+      padding: 20px;
+      box-shadow: var(--shadow);
+      border: 1px solid var(--border);
+      text-align: center;
+    }
+    .stat-card .num { font-size: 32px; font-weight: 700; line-height: 1.2; }
+    .stat-card .label { font-size: 12px; color: var(--text-secondary); margin-top: 4px; }
+    .stat-card.total .num { color: var(--blue); }
+    .stat-card.interview .num { color: var(--green); }
+    .stat-card.pending .num { color: var(--orange); }
+    .stat-card.lost .num { color: var(--red); }
+    .charts-row {
+      display: grid;
+      grid-template-columns: 1fr 1fr;
+      gap: 16px;
+      margin-bottom: 24px;
+    }
+    .chart-card {
+      background: var(--white);
+      border-radius: var(--radius);
+      padding: 20px;
+      box-shadow: var(--shadow);
+      border: 1px solid var(--border);
+    }
+    .chart-card h2 {
+      font-size: 14px;
+      font-weight: 600;
+      margin-bottom: 16px;
+      color: var(--text);
+    }
+    .chart-card canvas { max-height: 280px; }
+    .chart-wide { grid-column: 1 / -1; }
+    .loading {
+      text-align: center;
+      padding: 80px 0;
+      color: var(--text-secondary);
+    }
+    .loading::after {
+      content: "";
+      display: inline-block;
+      width: 16px;
+      height: 16px;
+      border: 2px solid var(--blue);
+      border-top-color: transparent;
+      border-radius: 50%;
+      animation: spin 0.6s linear infinite;
+      vertical-align: middle;
+      margin-left: 8px;
+    }
+    @keyframes spin { to { transform: rotate(360deg); } }
+    .error {
+      text-align: center;
+      padding: 80px 0;
+      color: var(--red);
+    }
+    @media (max-width: 640px) {
+      .stats-row { grid-template-columns: repeat(2, 1fr); }
+      .charts-row { grid-template-columns: 1fr; }
+    }
+  </style>
+</head>
+<body>
+  <div class="header">
+    <h1>📊 JobPulse 数据看板</h1>
+    <span class="refresh" id="refreshTime"></span>
+  </div>
+  <div class="container">
+    <div class="loading" id="loading">加载中</div>
+    <div id="error" class="error" style="display:none"></div>
+    <div id="content" style="display:none">
+      <div class="stats-row">
+        <div class="stat-card total">
+          <div class="num" id="statTotal">0</div>
+          <div class="label">总投递数</div>
+        </div>
+        <div class="stat-card interview">
+          <div class="num" id="statInterview">0</div>
+          <div class="label">进入面试</div>
+        </div>
+        <div class="stat-card pending">
+          <div class="num" id="statPending">0</div>
+          <div class="label">待跟进</div>
+        </div>
+        <div class="stat-card lost">
+          <div class="num" id="statLost">0</div>
+          <div class="label">已失效</div>
+        </div>
+      </div>
+      <div class="charts-row">
+        <div class="chart-card">
+          <h2>📈 投递漏斗</h2>
+          <canvas id="funnelChart"></canvas>
+        </div>
+        <div class="chart-card">
+          <h2>🏢 公司分布</h2>
+          <canvas id="companyChart"></canvas>
+        </div>
+      </div>
+      <div class="charts-row">
+        <div class="chart-card chart-wide">
+          <h2>📅 投递时间线（按周）</h2>
+          <canvas id="timelineChart"></canvas>
+        </div>
+      </div>
+    </div>
+  </div>
+  <script src="chart.umd.min.js"></script>
+  <script src="dashboard.js"></script>
+</body>
+</html>
