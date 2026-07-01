@@ -272,11 +272,24 @@ function extractJobPageData() {
   } else if (/zhaopin\.meituan/.test(hostname) && !company) {
     company = "美团";
   } else if (/zhipin\.com/.test(hostname) && !company) {
-    // BOSS直聘: try DOM selectors, fallback to page title parsing
-    var zhipinCompany = document.querySelector("a.company-name");
+    // BOSS直聘: company name is in a link with /company/ in href
+    var zhipinCompany = document.querySelector('a[href*="/company/"]');
+    if (!zhipinCompany) zhipinCompany = document.querySelector(".job-detail-company a");
     if (!zhipinCompany) zhipinCompany = document.querySelector(".company-info a");
-    if (!zhipinCompany) zhipinCompany = document.querySelector('[class*="company"] a');
+    if (!zhipinCompany) zhipinCompany = document.querySelector("a.company-name");
     if (zhipinCompany) company = clean(zhipinCompany.textContent);
+    // Fallback: parse page title format "{position}-{company}-BOSS直聘"
+    if (!company) {
+      var titleSegs = pageTitle.split(/[\-|–—|｜]/).map(clean).filter(Boolean);
+      for (var ts = 0; ts < titleSegs.length; ts++) {
+        var seg = titleSegs[ts];
+        // Skip segments that look like position titles or "BOSS直聘"
+        if (/BOSS|直聘|工程师|经理|专员|运营|设计|开发|产品|算法|测试|销售|市场|实习/i.test(seg)) continue;
+        if (seg.length >= 2 && seg.length <= 20) { company = seg; break; }
+      }
+    }
+    // Safety: never allow "BOSS直聘" as company name
+    if (/BOSS直聘|boss/i.test(company)) company = "";
   } else if (/mokahr\.com/.test(hostname) && !company) {
     // mokahr: extract company slug from URL path
     // e.g. campus_apply/ruijie/136206 → "ruijie" → map to Chinese name
@@ -542,6 +555,11 @@ function extractJobPageData() {
         break;
       }
     }
+  }
+  // Clean up: remove invisible/special unicode chars (garbled text from icon fonts, etc.)
+  if (salary) {
+    salary = salary.replace(/[^\x20-\x7E一-鿿＀-￯　-〿 -⁯ -¿]/g, "");
+    salary = clean(salary);
   }
 
   return {

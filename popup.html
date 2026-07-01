@@ -151,18 +151,26 @@
         color: var(--danger);
         border: 1px solid #ffccc7;
       }
-      .dash-link {
-        display: block;
-        text-align: center;
-        padding: 6px 0;
-        font-size: 12px;
+      .quick-links {
+        margin-top: 10px;
+        display: flex;
+        justify-content: center;
+        align-items: center;
+        gap: 6px;
+        font-size: 11px;
+      }
+      .quick-links a {
         color: var(--byte-blue);
         text-decoration: none;
-        border-radius: 6px;
+        padding: 2px 4px;
+        border-radius: 4px;
         transition: background 0.15s;
       }
-      .dash-link:hover {
+      .quick-links a:hover {
         background: var(--byte-blue-light);
+      }
+      .quick-links .sep {
+        color: var(--border);
       }
     </style>
   </head>
@@ -198,8 +206,12 @@
       <div class="actions">
         <button type="button" class="primary" id="submitBtn">写入飞书</button>
       </div>
-      <div class="actions">
-        <a href="dashboard.html" target="_blank" class="dash-link">📊 数据看板</a>
+      <div class="quick-links">
+        <a href="https://bytedance.feishu.cn/base/YOUR_APP_TOKEN?table=YOUR_TABLE_ID" target="_blank">📋 飞书表格</a>
+        <span class="sep">|</span>
+        <a href="https://applink.feishu.cn/client/chat/open?appId=YOUR_APP_ID" target="_blank">🤖 飞书Bot</a>
+        <span class="sep">|</span>
+        <a href="dashboard.html" target="_blank">📊 数据看板</a>
       </div>
       <p class="hint">
         请在职位详情页打开：岗位 JD 自动识别「职位描述」「岗位职责」「工作职责」等段落。若写入提示
