@@ -515,7 +515,23 @@ function extractJobPageData() {
     jd = extractDescReqModules(textFrom(document.body));
   }
 
-  const posClean = clean(position);
+  var posClean = clean(position);
+  // 美团 zhaopin.meituan.com: if position is still garbage, try page title parsing
+  var isMeituan = /zhaopin\.meituan/.test(hostname);
+  if (isMeituan && (!posClean || isBadTitle(posClean))) {
+    // 美团页面标题格式: "职位名 - 公司名 - 美团招聘" 或 "职位名 - 美团"
+    var mtSegs = pageTitle.split(/[\-|–—|｜]/).map(clean).filter(Boolean);
+    for (var ms = 0; ms < mtSegs.length; ms++) {
+      var seg = mtSegs[ms];
+      if (!isBadTitle(seg) && seg.length <= 40 &&
+          !/美团|招聘|校园|社会/i.test(seg)) {
+        position = seg;
+        posClean = clean(position);
+        break;
+      }
+    }
+  }
+
   jd = clean(jd);
   if (posClean && jd.startsWith(posClean)) {
     jd = jd.slice(posClean.length).trim();

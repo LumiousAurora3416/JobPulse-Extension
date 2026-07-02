@@ -66,7 +66,7 @@ def index():
 
 
 def handle_card_action(payload: dict) -> dict:
-    """处理卡片按钮回调"""
+    """处理卡片按钮回调 — 校验后立即返回，API 操作放入后台线程避免飞书 3s 超时"""
     action = payload.get("action", payload)
     value = action.get("value", {})
     action_type = value.get("action")
@@ -74,53 +74,67 @@ def handle_card_action(payload: dict) -> dict:
     new_status = value.get("status")
 
     print(f"  📩 收到回调: action={action_type}, record_id={record_id}, status={new_status}")
-    # 打印关键字段，排查 message_id 是否存在
-    print(f"  🔍 payload 字段: message_id={'有' if payload.get('message_id') else '无'}, open_id={'有' if payload.get('open_id') else '无'}, card={'有' if payload.get('card') else '无'}")
 
     if action_type != "update_status" or not record_id:
         return {"code": 400, "msg": "无效的回调参数"}
 
-    # 更新飞书表格
-    client = FeishuClient()
-    status_map = {
-        "面试": {"提醒状态": "有反馈", "结果": "面试"},
-        "无反馈": {"提醒状态": "已跟进", "结果": "无反馈"},
-        "简历挂": {"提醒状态": "已失效", "结果": "简历挂"},
-    }
-    fields = status_map.get(new_status, {"提醒状态": "已跟进"})
-
-    ok = client.update_record(record_id, fields)
-    if not ok:
-        print(f"  ❌ 更新记录失败")
-        return {"code": 500, "msg": "更新失败"}
-
-    print(f"  ✅ 已更新记录 {record_id} → {new_status}")
-
-    # 获取记录详情，优先从飞书表格"消息ID"字段读取 message_id
-    rec = client.get_record(record_id)
-    company = client.field_value(rec, "公司") if rec else ""
-    position = client.field_value(rec, "岗位") if rec else ""
-    message_id = client.field_value(rec, "消息ID") if rec else ""
-
-    # fallback: 本地 message_store.json
-    if not message_id:
-        store_path = os.path.join(os.path.dirname(__file__), "message_store.json")
-        if os.path.exists(store_path):
-            try:
-                msg_store = json.load(open(store_path))
-                message_id = msg_store.get(record_id, "")
-            except (json.JSONDecodeError, OSError):
-                pass
-
-    if message_id:
-        new_card = updated_card(company, position, new_status)
-        print(f"  🔄 更新卡片 message_id={message_id[:20]}...")
-        card_ok = client.update_message_card(message_id, new_card)
-        print(f"  {'✅' if card_ok else '❌'} 卡片更新: {'成功' if card_ok else '失败'}")
-    else:
-        print(f"  ⚠️ 未找到 message_id，无法更新卡片")
+    # Process in background thread to respond within Feishu's 3s timeout
+    thread = threading.Thread(
+        target=_process_card_action,
+        args=(record_id, new_status),
+        daemon=True,
+    )
+    thread.start()
 
     return {"code": 0}
+
+
+def _process_card_action(record_id: str, new_status: str):
+    """后台线程：更新表格记录 + 替换卡片内容"""
+    try:
+        client = FeishuClient()
+        status_map = {
+            "面试": {"提醒状态": "有反馈", "结果": "面试"},
+            "无反馈": {"提醒状态": "已跟进", "结果": "无反馈"},
+            "简历挂": {"提醒状态": "已失效", "结果": "简历挂"},
+        }
+        fields = status_map.get(new_status, {"提醒状态": "已跟进"})
+
+        ok = client.update_record(record_id, fields)
+        if not ok:
+            print(f"  ❌ 更新记录失败")
+            return
+
+        print(f"  ✅ 已更新记录 {record_id} → {new_status}")
+
+        # 获取记录详情，优先从飞书表格"消息ID"字段读取 message_id
+        rec = client.get_record(record_id)
+        company = client.field_value(rec, "公司") if rec else ""
+        position = client.field_value(rec, "岗位") if rec else ""
+        message_id = client.field_value(rec, "消息ID") if rec else ""
+
+        # fallback: 本地 message_store.json
+        if not message_id:
+            store_path = os.path.join(os.path.dirname(__file__), "message_store.json")
+            if os.path.exists(store_path):
+                try:
+                    msg_store = json.load(open(store_path))
+                    message_id = msg_store.get(record_id, "")
+                except (json.JSONDecodeError, OSError):
+                    pass
+
+        if message_id:
+            new_card = updated_card(company, position, new_status)
+            print(f"  🔄 更新卡片 message_id={message_id[:20]}...")
+            card_ok = client.update_message_card(message_id, new_card)
+            print(f"  {'✅' if card_ok else '❌'} 卡片更新: {'成功' if card_ok else '失败'}")
+        else:
+            print(f"  ⚠️ 未找到 message_id，无法更新卡片")
+
+    except Exception as e:
+        print(f"  ❌ 后台处理卡片回调异常: {e}")
+        import traceback
+        traceback.print_exc()
 
 
 def handle_event(payload: dict):
