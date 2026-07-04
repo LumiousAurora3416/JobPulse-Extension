@@ -1,5 +1,31 @@
 # Changelog
 
+## v1.3.0 (2026-07-05)
+
+### 新增
+- **飞书机器人对话全面增强**：新增 `query_record`（查进度）、`record_interview`（记面试时间）意图
+- **配置页面** `setup.html`：用户自行填入飞书凭证，存入 chrome.storage.local，不在代码中硬编码
+- **数据看板配置兼容**：dashboard.js 从 chrome.storage.local 读取凭证，无需修改代码
+
+### 修复
+- **面试查询不准**：`_query_interviews` 以前只查"面试时间"字段，现在同时检查"结果=面试"和"面试时间"字段，已进入面试但未填时间的单独列出
+- **查进度被误当作新投递**：新增 `query_record` 意图，LLM 识别"字节怎么样了"等查询；`_execute_create` 加重复检查防误创建
+- **README.md 移除 PROJECT_REVIEW.md 引用**：隐私文档不上传 GitHub
+
+### 变更
+- **密钥外置**：popup.js / dashboard.js 删除硬编码飞书密钥，改为 `setup.html` 配置页写入 chrome.storage.local
+- **config.py 清理**：删除硬编码 FEISHU_RECEIVER_ID，全部走环境变量
+- **manifest.json**：新增 `storage` 权限
+- **git 历史清洗**：用 filter-branch 将全部 36 个 commit 中的密钥替换为占位符，__pycache__ 从追踪中移除
+- **PROJECT_REVIEW.md**：移出 git 追踪（仅本地维护），加入 .gitignore
+- **README 全面更新**：适配开源后的自配置流程
+
+### 技术栈
+| 层 | 技术 |
+|---|---|
+| 配置存储 | chrome.storage.local |
+| 历史清洗 | git filter-branch |
+
 ## v1.2.0 (2026-07-01)
 
 ### 新增
