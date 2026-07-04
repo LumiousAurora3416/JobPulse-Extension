@@ -175,49 +175,61 @@
     </style>
   </head>
   <body>
-    <h1>同步到飞书多维表格</h1>
-    <div class="card">
-      <div class="field">
-        <label for="position">岗位</label>
-        <input type="text" id="position" placeholder="页面顶部职位名，如「产品实习生」" autocomplete="off" />
+    <!-- 未配置时的提示 -->
+    <div id="setupPrompt" class="card" style="display:none; text-align:center; padding:32px 16px;">
+      <p style="font-size:15px; margin-bottom:20px;">🔑 使用前请先配置飞书账号</p>
+      <button type="button" class="primary" id="openSetupBtn" style="width:100%;">打开配置页面</button>
+      <p class="hint" style="margin-top:16px;">数据仅保存在本地浏览器，不会上传</p>
+    </div>
+
+    <!-- 主界面 -->
+    <div id="mainView">
+      <h1>同步到飞书多维表格</h1>
+      <div class="card">
+        <div class="field">
+          <label for="position">岗位</label>
+          <input type="text" id="position" placeholder="页面顶部职位名，如「产品实习生」" autocomplete="off" />
+        </div>
+        <div class="field">
+          <label for="company">公司</label>
+          <input type="text" id="company" placeholder="自动识别，可修改" autocomplete="off" />
+        </div>
+        <div class="field">
+          <label for="jobDesc">岗位 JD</label>
+          <textarea id="jobDesc" placeholder="从页面正文自动抓取，可删减后提交"></textarea>
+        </div>
+        <div class="field">
+          <label for="applyUrl">投递链接</label>
+          <input type="text" id="applyUrl" readonly placeholder="当前页 URL" />
+        </div>
+        <div class="field">
+          <label for="salary">薪资</label>
+          <input type="text" id="salary" placeholder="如 15k-25k·14薪，BOSS直聘自动抓取" autocomplete="off" />
+        </div>
+        <div class="field">
+          <label for="result">结果</label>
+          <select id="result">
+            <option value="简历" selected>简历</option>
+          </select>
+        </div>
+        <div class="actions">
+          <button type="button" class="primary" id="submitBtn">写入飞书</button>
+        </div>
+        <div class="quick-links">
+          <a id="feishuTableLink" href="#" target="_blank">📋 飞书表格</a>
+          <span class="sep">|</span>
+          <a id="feishuBotLink" href="#" target="_blank">🤖 飞书Bot</a>
+          <span class="sep">|</span>
+          <a href="dashboard.html" target="_blank">📊 数据看板</a>
+          <span class="sep">|</span>
+          <a id="setupLink" href="#">⚙️ 设置</a>
+        </div>
+        <p class="hint">
+          请在职位详情页打开：岗位 JD 自动识别「职位描述」「岗位职责」「工作职责」等段落。若写入提示
+          Forbidden / 无权限，请在飞书为应用开通多维表格权限并授权访问该 Base。
+        </p>
+        <div id="message" class="msg" role="status"></div>
       </div>
-      <div class="field">
-        <label for="company">公司</label>
-        <input type="text" id="company" placeholder="自动识别，可修改" autocomplete="off" />
-      </div>
-      <div class="field">
-        <label for="jobDesc">岗位 JD</label>
-        <textarea id="jobDesc" placeholder="从页面正文自动抓取，可删减后提交"></textarea>
-      </div>
-      <div class="field">
-        <label for="applyUrl">投递链接</label>
-        <input type="text" id="applyUrl" readonly placeholder="当前页 URL" />
-      </div>
-      <div class="field">
-        <label for="salary">薪资</label>
-        <input type="text" id="salary" placeholder="如 15k-25k·14薪，BOSS直聘自动抓取" autocomplete="off" />
-      </div>
-      <div class="field">
-        <label for="result">结果</label>
-        <select id="result">
-          <option value="简历" selected>简历</option>
-        </select>
-      </div>
-      <div class="actions">
-        <button type="button" class="primary" id="submitBtn">写入飞书</button>
-      </div>
-      <div class="quick-links">
-        <a href="https://bytedance.feishu.cn/base/YOUR_APP_TOKEN?table=YOUR_TABLE_ID" target="_blank">📋 飞书表格</a>
-        <span class="sep">|</span>
-        <a href="https://applink.feishu.cn/client/chat/open?appId=YOUR_APP_ID" target="_blank">🤖 飞书Bot</a>
-        <span class="sep">|</span>
-        <a href="dashboard.html" target="_blank">📊 数据看板</a>
-      </div>
-      <p class="hint">
-        请在职位详情页打开：岗位 JD 自动识别「职位描述」「岗位职责」「工作职责」等段落。若写入提示
-        Forbidden / 无权限，请在飞书为应用开通多维表格权限并授权访问该 Base。
-      </p>
-      <div id="message" class="msg" role="status"></div>
     </div>
     <script src="popup.js"></script>
   </body>

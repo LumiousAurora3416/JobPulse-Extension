@@ -1,14 +1,9 @@
 /**
  * JobPulse 数据看板 — 从飞书多维表格拉取数据，用 Chart.js 渲染图表
+ * 配置从 chrome.storage.local 读取（用户在 setup.html 中填入）
  */
 
-const FEISHU = {
-  appId: "YOUR_APP_ID",
-  appSecret: "YOUR_APP_SECRET",
-  appToken: "YOUR_APP_TOKEN",
-  tableId: "YOUR_TABLE_ID",
-};
-
+let FEISHU = null;
 const TOKEN_URL = "https://open.feishu.cn/open-apis/auth/v3/tenant_access_token/internal";
 
 function recordUrl(pageSize, pageToken) {
@@ -207,6 +202,19 @@ function renderCharts(data) {
 
 async function main() {
   try {
+    // Load config from chrome.storage.local
+    var cfgResult = await new Promise(function(resolve) {
+      chrome.storage.local.get(['feishuConfig'], resolve);
+    });
+    var config = cfgResult.feishuConfig;
+    if (!config || !config.appId || !config.appSecret || !config.appToken || !config.tableId) {
+      document.getElementById('loading').style.display = 'none';
+      document.getElementById('error').style.display = 'block';
+      document.getElementById('error').textContent = '请先在插件弹窗中点击设置按钮，配置飞书账号';
+      return;
+    }
+    FEISHU = config;
+
     var token = await getTenantAccessToken();
     var records = await listAllRecords(token);
 

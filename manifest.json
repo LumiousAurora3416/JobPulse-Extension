@@ -7,6 +7,6 @@
     "default_popup": "popup.html",
     "default_title": "同步到飞书"
   },
-  "permissions": ["tabs", "activeTab", "scripting"],
+  "permissions": ["tabs", "activeTab", "scripting", "storage"],
   "host_permissions": ["https://open.feishu.cn/*"]
 }

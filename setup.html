@@ -1,0 +1,152 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>JobPulse · 配置飞书</title>
+  <style>
+    :root {
+      --byte-blue: #3370ff;
+      --byte-blue-hover: #2860e1;
+      --byte-blue-light: #e8f0ff;
+      --text-primary: #1f2329;
+      --text-secondary: #646a73;
+      --border: #dee0e3;
+      --bg-page: #f5f7fa;
+      --radius: 8px;
+      --shadow: 0 2px 8px rgba(31,35,41,0.08);
+    }
+    * { box-sizing: border-box; margin: 0; padding: 0; }
+    body {
+      font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, "PingFang SC", "Microsoft YaHei", sans-serif;
+      background: var(--bg-page);
+      color: var(--text-primary);
+      font-size: 14px;
+      min-height: 100vh;
+      display: flex;
+      justify-content: center;
+      padding: 48px 16px;
+    }
+    .container {
+      max-width: 480px;
+      width: 100%;
+    }
+    h1 {
+      font-size: 20px;
+      font-weight: 600;
+      margin-bottom: 4px;
+    }
+    .subtitle {
+      color: var(--text-secondary);
+      font-size: 13px;
+      margin-bottom: 24px;
+    }
+    .card {
+      background: #fff;
+      border-radius: var(--radius);
+      box-shadow: var(--shadow);
+      border: 1px solid var(--border);
+      padding: 24px;
+    }
+    .field {
+      margin-bottom: 16px;
+    }
+    label {
+      display: block;
+      font-size: 12px;
+      font-weight: 500;
+      color: var(--text-secondary);
+      margin-bottom: 4px;
+    }
+    input {
+      width: 100%;
+      padding: 8px 10px;
+      border: 1px solid var(--border);
+      border-radius: var(--radius);
+      font-size: 13px;
+      font-family: monospace;
+      outline: none;
+      transition: border-color 0.15s;
+    }
+    input:focus {
+      border-color: var(--byte-blue);
+      box-shadow: 0 0 0 2px var(--byte-blue-light);
+    }
+    .actions {
+      margin-top: 20px;
+      display: flex;
+      gap: 8px;
+    }
+    button.primary {
+      flex: 1;
+      padding: 10px 16px;
+      border: none;
+      border-radius: 6px;
+      font-size: 14px;
+      font-weight: 500;
+      color: #fff;
+      background: var(--byte-blue);
+      cursor: pointer;
+    }
+    button.primary:hover { background: var(--byte-blue-hover); }
+    .msg {
+      margin-top: 12px;
+      padding: 10px;
+      border-radius: 6px;
+      font-size: 13px;
+      display: none;
+    }
+    .msg.ok { display: block; background: #e8ffea; color: #0d7a3e; border: 1px solid #b7eb8f; }
+    .msg.err { display: block; background: #fff2f0; color: #d83931; border: 1px solid #ffccc7; }
+    .hint {
+      margin-top: 12px;
+      font-size: 12px;
+      color: var(--text-secondary);
+      line-height: 1.5;
+    }
+    .hint code {
+      background: var(--byte-blue-light);
+      padding: 1px 4px;
+      border-radius: 3px;
+      font-size: 11px;
+    }
+  </style>
+</head>
+<body>
+  <div class="container">
+    <h1>⚙️ 配置飞书账号</h1>
+    <p class="subtitle">填入你自己的飞书自建应用凭证，数据仅保存在本地浏览器</p>
+
+    <div class="card">
+      <div class="field">
+        <label for="appId">App ID</label>
+        <input type="text" id="appId" placeholder="cli_xxxxxxxxxxxxxxxx" autocomplete="off" />
+      </div>
+      <div class="field">
+        <label for="appSecret">App Secret</label>
+        <input type="password" id="appSecret" placeholder="输入应用密钥" />
+      </div>
+      <div class="field">
+        <label for="appToken">Base Token</label>
+        <input type="text" id="appToken" placeholder="Rcifxxxxxxxxxxxxxxxxxxxxxxxx" autocomplete="off" />
+      </div>
+      <div class="field">
+        <label for="tableId">Table ID</label>
+        <input type="text" id="tableId" placeholder="tblxxxxxxxxxxxxxxx" autocomplete="off" />
+      </div>
+
+      <div class="actions">
+        <button class="primary" id="saveBtn">保存配置</button>
+      </div>
+      <div id="message" class="msg"></div>
+
+      <div class="hint">
+        <p>💡 不知道怎么获取？在飞书开放平台创建自建应用后，
+        在「凭证与基础信息」页获取 App ID / Secret，
+        在多维表格 URL 中获取 <code>/base/</code> 后面的那段（Base Token）和 <code>?table=</code> 后面的值（Table ID）。</p>
+      </div>
+    </div>
+  </div>
+  <script src="setup.js"></script>
+</body>
+</html>

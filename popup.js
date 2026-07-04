@@ -1,13 +1,8 @@
 /**
- * 飞书自建应用配置（勿将含 App Secret 的构建产物公开分发；生产环境建议走服务端代理）
+ * 飞书自建应用配置
+ * 优先从 chrome.storage.local 读取（用户在 setup.html 中填入）
  */
-const FEISHU = {
-  appId: "YOUR_APP_ID",
-  appSecret: "YOUR_APP_SECRET",
-  appToken: "YOUR_APP_TOKEN",
-  tableId: "YOUR_TABLE_ID",
-};
-
+let FEISHU = null;
 const TOKEN_URL =
   "https://open.feishu.cn/open-apis/auth/v3/tenant_access_token/internal";
 
@@ -670,10 +665,51 @@ function setLoading(loading) {
   btn.textContent = loading ? "提交中…" : "写入飞书";
 }
 
-document.addEventListener("DOMContentLoaded", () => {
+/**
+ * Load Feishu config from chrome.storage.local.
+ * If not configured, show a prompt to open setup page.
+ */
+function loadConfig() {
+  return new Promise((resolve) => {
+    chrome.storage.local.get(["feishuConfig"], function (result) {
+      var cfg = result.feishuConfig;
+      if (cfg && cfg.appId && cfg.appSecret && cfg.appToken && cfg.tableId) {
+        FEISHU = cfg;
+        resolve(true);
+      } else {
+        FEISHU = null;
+        resolve(false);
+      }
+    });
+  });
+}
+
+function openSetup() {
+  chrome.tabs.create({ url: "setup.html" });
+}
+
+document.addEventListener("DOMContentLoaded", async function () {
+  var hasConfig = await loadConfig();
+  if (!hasConfig) {
+    document.getElementById("mainView").style.display = "none";
+    document.getElementById("setupPrompt").style.display = "block";
+    document.getElementById("openSetupBtn").addEventListener("click", openSetup);
+    return;
+  }
+
+  // Set dynamic quick links from config
+  document.getElementById("feishuTableLink").href =
+    "https://bytedance.feishu.cn/base/" + FEISHU.appToken + "?table=" + FEISHU.tableId;
+  document.getElementById("feishuBotLink").href =
+    "https://applink.feishu.cn/client/chat/open?appId=" + FEISHU.appId;
+  document.getElementById("setupLink").addEventListener("click", function (e) {
+    e.preventDefault();
+    openSetup();
+  });
+
   fillFromPage();
 
-  document.getElementById("submitBtn").addEventListener("click", async () => {
+  document.getElementById("submitBtn").addEventListener("click", async function () {
     hideMessage();
 
     const position = document.getElementById("position").value.trim();
