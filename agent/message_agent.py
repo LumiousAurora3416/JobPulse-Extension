@@ -26,8 +26,12 @@ Intents:
   Examples: "面试安排" "最近面试" "什么时候面试"
 - query_statistics: Asking for aggregate application stats
   Examples: "统计数据" "投递情况" "一共投了多少" "有多少面试"
+- query_record: Asking about a specific company's application status (already in the table)
+  Examples: "我投的字节怎么样了" "腾讯那个岗位有消息吗" "阿里云现在什么情况" "查一下我投的公司进度"
+  Extract: company (公司名, required)
 - create_record: Logging a new application the user just submitted
-  Examples: "投了字节前端" "刚在Boss投了快手" "记一下我投了腾讯" "面了阿里"
+  Examples: "投了字节前端" "刚在Boss投了快手" "记一下我投了腾讯"
+  DO NOT classify as create_record if the user is asking about an existing record. Use query_record instead.
   Extract: company (公司名), position (岗位名), platform (平台名, optional)
 - update_status: Changing an application's follow-up status
   Examples: "腾讯有反馈了" "改成面试" "字节挂了" "美团有消息了"
@@ -68,6 +72,8 @@ def handle_message(sender_id: str, message_text: str,
             data = _query_interviews(client)
         elif intent == "query_statistics":
             data = _query_statistics(client)
+        elif intent == "query_record":
+            data = _query_record(client, params)
         elif intent == "create_record":
             data = _execute_create(client, params)
         elif intent == "update_status":
@@ -79,6 +85,7 @@ def handle_message(sender_id: str, message_text: str,
                 "⏳ 查看待跟进：「哪些没反馈」\n"
                 "📅 面试安排：「最近面试」\n"
                 "📊 投递统计：「统计数据」\n"
+                "🔍 查投递进度：「字节怎么样了」\n"
                 "✏️ 记录新投递：「投了字节前端」\n"
                 "🔄 更新状态：「腾讯有反馈了」\n\n"
                 "试试看吧！"
@@ -170,23 +177,35 @@ def _query_pending(client: FeishuClient) -> str:
 
 
 def _query_interviews(client: FeishuClient) -> str:
-    """Query upcoming interviews."""
+    """Query upcoming / ongoing interviews.
+    Include records with 结果=面试 even if 面试时间 is not set yet."""
     records = client.list_records()
     interviews = []
+    no_date = []
     for rec in records:
+        result = client.field_value(rec, "结果")
         interview_date = client.field_value(rec, "面试时间")
-        if not interview_date:
+        if result != "面试" and not interview_date:
             continue
         company = client.field_value(rec, "公司")
         position = client.field_value(rec, "岗位")
-        interviews.append((company or "未知", position or "未知", str(interview_date)))
+        label = f"{company or '未知'} - {position or '未知'}"
+        if interview_date:
+            interviews.append((label, str(interview_date)))
+        else:
+            no_date.append(label)
 
-    if not interviews:
+    if not interviews and not no_date:
         return "目前没有面试安排 📅"
 
     lines = ["📅 面试安排："]
-    for c, p, d in interviews:
-        lines.append(f"  • {c} - {p} @ {d}")
+    for label, d in interviews:
+        lines.append(f"  • {label} @ {d}")
+    if no_date:
+        lines.append("")
+        lines.append(f"⏳ 以下岗位已进入面试阶段，待补充面试时间：")
+        for label in no_date:
+            lines.append(f"  • {label}")
     return "\n".join(lines)
 
 
@@ -213,6 +232,40 @@ def _query_statistics(client: FeishuClient) -> str:
     )
 
 
+def _query_record(client: FeishuClient, params: dict) -> str:
+    """Query a specific company's application record."""
+    company = params.get("company", "")
+    if not company:
+        return "你想查哪家公司的投递情况？说清楚公司名就行"
+
+    records = client.list_records()
+    matches = []
+    for rec in records:
+        c = client.field_value(rec, "公司")
+        # Try exact match first, then partial
+        if c == company or (company in c or c in company):
+            position = client.field_value(rec, "岗位")
+            result = client.field_value(rec, "结果")
+            status = client.field_value(rec, "提醒状态")
+            days = client.field_value(rec, "投递天数")
+            interview_date = client.field_value(rec, "面试时间")
+            matches.append((c, position, result, status, days, interview_date))
+
+    if not matches:
+        return f"没找到「{company}」的投递记录，试试用「投了{company}xx岗位」新建一条？"
+
+    lines = [f"📋 **{company}** 的投递记录："]
+    for i, (c, p, r, s, d, iv) in enumerate(matches, 1):
+        lines.append(f"\n  {i}. {p or '未知岗位'}")
+        lines.append(f"     结果：{r or '未更新'}")
+        lines.append(f"     状态：{s or '未更新'}")
+        if d:
+            lines.append(f"     投递 {d} 天")
+        if iv:
+            lines.append(f"     面试时间：{iv}")
+    return "\n".join(lines)
+
+
 def _execute_create(client: FeishuClient, params: dict) -> str:
     """Create a new application record."""
     company = params.get("company", "")
@@ -221,6 +274,22 @@ def _execute_create(client: FeishuClient, params: dict) -> str:
 
     if not company and not position:
         return "没识别到公司和岗位信息，麻烦说清楚一些，比如「我在Boss投了字节前端」"
+
+    # Duplicate check: if exact same company+position already exists, warn
+    if company and position:
+        records = client.list_records()
+        for rec in records:
+            existing_company = client.field_value(rec, "公司")
+            existing_position = client.field_value(rec, "岗位")
+            if existing_company == company and existing_position == position:
+                existing_status = client.field_value(rec, "结果")
+                return (
+                    f"⚠️ 表格中已有「{company} - {position}」的记录"
+                    f"（状态：{existing_status or '未更新'}）\n"
+                    f"如果想更新状态，试试说「{company}改成面试」\n"
+                    f"如果想查进度，试试说「{company}怎么样了」\n"
+                    f"如果确实是重复投递，请补充具体说明后重试"
+                )
 
     # Build fields with sensible defaults
     today = datetime.now()
