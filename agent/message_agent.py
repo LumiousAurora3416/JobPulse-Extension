@@ -28,7 +28,10 @@ Intents:
   Examples: "统计数据" "投递情况" "一共投了多少" "有多少面试"
 - query_record: Asking about a specific company's application status (already in the table)
   Examples: "我投的字节怎么样了" "腾讯那个岗位有消息吗" "阿里云现在什么情况" "查一下我投的公司进度"
-  Extract: company (公司名, required)
+  Extract: company (公司名, required), position (岗位名, optional)
+- record_interview: Recording or updating interview time for an application
+  Examples: "字节周三下午两点面试" "腾讯后天上午十点面试" "帮我记下面试时间" "阿里云面试改到周五了"
+  Extract: company (公司名, required), interview_time (面试时间, required, use YYYY-MM-DD HH:MM format in UTC+8), position (岗位名, optional)
 - create_record: Logging a new application the user just submitted
   Examples: "投了字节前端" "刚在Boss投了快手" "记一下我投了腾讯"
   DO NOT classify as create_record if the user is asking about an existing record. Use query_record instead.
@@ -74,6 +77,8 @@ def handle_message(sender_id: str, message_text: str,
             data = _query_statistics(client)
         elif intent == "query_record":
             data = _query_record(client, params)
+        elif intent == "record_interview":
+            data = _record_interview(client, params)
         elif intent == "create_record":
             data = _execute_create(client, params)
         elif intent == "update_status":
@@ -87,7 +92,8 @@ def handle_message(sender_id: str, message_text: str,
                 "📊 投递统计：「统计数据」\n"
                 "🔍 查投递进度：「字节怎么样了」\n"
                 "✏️ 记录新投递：「投了字节前端」\n"
-                "🔄 更新状态：「腾讯有反馈了」\n\n"
+                "🔄 更新状态：「腾讯有反馈了」\n"
+                "📅 记录面试时间：「字节周三面试」\n\n"
                 "试试看吧！"
             )
         _reply(client, sender_id, data, receive_id_type)
@@ -264,6 +270,56 @@ def _query_record(client: FeishuClient, params: dict) -> str:
         if iv:
             lines.append(f"     面试时间：{iv}")
     return "\n".join(lines)
+
+
+def _record_interview(client: FeishuClient, params: dict) -> str:
+    """Record or update interview time for an application."""
+    company = params.get("company", "")
+    interview_time = params.get("interview_time", "")
+    position = params.get("position", "")
+
+    if not company:
+        return "你说的是哪家公司？比如「字节周三下午两点面试」"
+    if not interview_time:
+        return "面试时间是什么时候？比如「字节周三下午两点面试」"
+
+    # Parse YYYY-MM-DD HH:MM to millisecond timestamp (UTC+8)
+    tz8 = timezone(timedelta(hours=8))
+    try:
+        dt = datetime.strptime(interview_time, "%Y-%m-%d %H:%M")
+        dt = dt.replace(tzinfo=tz8)
+        time_ms = int(dt.timestamp() * 1000)
+    except ValueError:
+        return f"时间「{interview_time}」我没看懂，直接跟我说「字节周三下午两点面试」就好"
+
+    # Find matching record
+    records = client.list_records()
+    target = None
+    target_position = ""
+    for rec in records:
+        c = client.field_value(rec, "公司")
+        p = client.field_value(rec, "岗位")
+        if c == company or (company in c or c in company):
+            if position and p == position:
+                target = rec
+                target_position = p
+                break
+            elif not position and target is None:
+                target = rec
+                target_position = p
+
+    if not target:
+        return f"没找到「{company}」的投递记录"
+
+    record_id = target.get("record_id", "")
+    fields = {"面试时间": time_ms, "结果": "面试", "提醒状态": "有反馈"}
+    ok = client.update_record(record_id, fields)
+    if not ok:
+        return "❌ 更新失败，请稍后重试"
+
+    time_str = dt.strftime("%Y年%m月%d日 %H:%M")
+    pos_str = f"（{target_position}）" if target_position else ""
+    return f"✅ 已记录 {company}{pos_str} 面试时间：{time_str}"
 
 
 def _execute_create(client: FeishuClient, params: dict) -> str:
