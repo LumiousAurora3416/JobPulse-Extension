@@ -4,10 +4,13 @@ JobPulse Message Agent — 处理用户私聊消息
 """
 
 import json
+import time
 from datetime import datetime, timezone, timedelta
 
 from feishu import FeishuClient
 from llm_client import LLMClient
+from cards import follow_up_card
+from config import FOLLOW_UP_HOURS
 
 
 # System prompt for intent classification
@@ -39,6 +42,8 @@ Intents:
 - update_status: Changing an application's follow-up status
   Examples: "腾讯有反馈了" "改成面试" "字节挂了" "美团有消息了"
   Extract: company (公司名), new_status (面试/无反馈/简历挂/已跟进)
+- trigger_follow_up: Manually push follow-up reminder cards for all pending applications
+  Examples: "推送卡片" "发送提醒" "推送跟进" "发跟进卡片" "推送"
 - chat: Greeting, thanks, small talk, unclear, or anything else not covered above
 
 Return format:
@@ -83,6 +88,8 @@ def handle_message(sender_id: str, message_text: str,
             data = _execute_create(client, params)
         elif intent == "update_status":
             data = _execute_update(client, params)
+        elif intent == "trigger_follow_up":
+            data = _trigger_follow_up(client, sender_id, receive_id_type)
         else:
             data = (
                 "你好！我可以帮你：\n"
@@ -93,7 +100,8 @@ def handle_message(sender_id: str, message_text: str,
                 "🔍 查投递进度：「字节怎么样了」\n"
                 "✏️ 记录新投递：「投了字节前端」\n"
                 "🔄 更新状态：「腾讯有反馈了」\n"
-                "📅 记录面试时间：「字节周三面试」\n\n"
+                "📅 记录面试时间：「字节周三面试」\n"
+                "📨 推送跟进卡片：「推送卡片」\n\n"
                 "试试看吧！"
             )
         _reply(client, sender_id, data, receive_id_type)
@@ -420,3 +428,55 @@ def _execute_update(client: FeishuClient, params: dict) -> str:
         return "❌ 更新失败，请稍后重试"
 
     return f"✅ 已将「{company}」更新为「{new_status}」"
+
+
+def _get_days(record: dict, client: FeishuClient) -> int:
+    """Calculate days since application."""
+    formula_val = client.field_value(record, "投递天数")
+    if formula_val and formula_val.replace(".", "").isdigit():
+        return int(float(formula_val))
+    created = record.get("created_at") or record.get("created_time")
+    if created:
+        try:
+            if "T" in str(created):
+                dt = datetime.fromisoformat(str(created).replace("Z", "+00:00"))
+            else:
+                dt = datetime.fromtimestamp(int(created) / 1000, tz=timezone.utc)
+            return (datetime.now(timezone.utc) - dt).days
+        except (ValueError, OSError):
+            pass
+    return 999
+
+
+def _trigger_follow_up(client: FeishuClient, sender_id: str,
+                       receive_id_type: str) -> str:
+    """Push follow-up reminder cards for all pending applications."""
+    records = client.list_records()
+    threshold_days = FOLLOW_UP_HOURS / 24
+
+    pending = []
+    for rec in records:
+        status = client.field_value(rec, "提醒状态")
+        if status not in ("", "待跟进"):
+            continue
+        days = _get_days(rec, client)
+        if days >= threshold_days:
+            company = client.field_value(rec, "公司")
+            position = client.field_value(rec, "岗位")
+            url = client.field_value(rec, "投递链接")
+            record_id = rec.get("record_id", "")
+            pending.append((company, position, days, url, record_id))
+
+    if not pending:
+        return "目前没有需要跟进的投递 ✅"
+
+    sent = 0
+    for company, position, days, url, record_id in pending:
+        card = follow_up_card(company, position, days, url, record_id)
+        msg_id = client.send_card(sender_id, card, receive_id_type)
+        if msg_id:
+            client.update_record(record_id, {"消息ID": msg_id})
+            sent += 1
+        time.sleep(0.3)
+
+    return f"📨 已推送 {sent}/{len(pending)} 条跟进提醒卡片"
