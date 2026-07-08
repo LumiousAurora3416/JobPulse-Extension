@@ -296,6 +296,7 @@ function extractJobPageData() {
         huawei: "华为", bytedance: "字节跳动", didi: "滴滴",
         jd: "京东", pdd: "拼多多", sf: "顺丰",
         bankcomm: "交通银行", cmb: "招商银行", icbc: "工商银行",
+        58: "58同城",
       };
       company = slugMap[mokaMatch[1]] || mokaMatch[1];
     }
@@ -318,10 +319,14 @@ function extractJobPageData() {
       '[class*="positionName"]',
       '[class*="job-title-text"]',
       '[class*="detail-title"]',
-      // mokahr campus_apply
+      // mokahr campus_apply (SPA 渲染，class 名不固定)
       '[class*="position-name"]',
       '[class*="campus-position"]',
       '[class*="campus-title"]',
+      '[class*="apply-position"]',
+      '[class*="recruit-name"]',
+      '[class*="campus-name"]',
+      '[class*="position"][class*="title"]', // catches position-title/positionTitle
       // Generic fallbacks
       '[class*="positionTitle"]',
       '[class*="PositionTitle"]',
@@ -333,11 +338,15 @@ function extractJobPageData() {
       '[class*="name"][class*="position"]',
       '[class*="recruit-title"]',
       '[class*="title-name"]',
-      // Extra: h1 inside detail containers
+      // Extra: h1/h2/h3 inside detail containers (SPA 不固定 class 名时兜底)
       '.job-detail h1',
+      '.job-detail h2',
+      '.job-detail h3',
       '.position-detail h1',
       '.position-detail h2',
+      '.position-detail h3',
       '.job-detail-content h1',
+      '[class*="detail"] h1, [class*="detail"] h2, [class*="detail"] h3',
     ];
     for (const sel of positionSelectors) {
       const el = document.querySelector(sel);

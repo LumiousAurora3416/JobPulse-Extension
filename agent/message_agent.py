@@ -113,6 +113,26 @@ def handle_message(sender_id: str, message_text: str,
 # ── Helpers ──────────────────────────────────────────
 
 
+def _parse_ts_ms(ts, tz=timezone.utc):
+    """Parse various timestamp/date formats to ms since epoch. Returns None on failure."""
+    if not ts:
+        return None
+    if isinstance(ts, (int, float)):
+        return int(ts)
+    if isinstance(ts, str):
+        ts = ts.strip()
+        # Pure numeric string (ms or s timestamp)
+        if ts.isdigit():
+            return int(ts)
+        # Date string "YYYY-MM-DD" or "YYYY-MM-DD HH:MM"
+        try:
+            dt = datetime.strptime(ts[:10], "%Y-%m-%d")
+            return int(dt.replace(tzinfo=tz).timestamp() * 1000)
+        except (ValueError, IndexError):
+            pass
+    return None
+
+
 def _reply(client: FeishuClient, to: str, text: str, id_type: str):
     """Send reply, split long messages if needed."""
     if not text:
@@ -150,16 +170,17 @@ def _query_today_count(client: FeishuClient) -> str:
 
     today_items = []
     for rec in records:
-        created = rec.get("created_at") or rec.get("created_time", 0)
-        try:
-            ct = int(created)
-            if start_ms <= ct < end_ms:
-                company = client.field_value(rec, "公司")
-                position = client.field_value(rec, "岗位")
-                label = f"{company} - {position}" if company else (position or "未命名")
-                today_items.append(label)
-        except (ValueError, TypeError):
-            pass
+        # Priority: fields.投递时间 > record created_time > record created_at
+        fields = rec.get("fields", {})
+        ts = fields.get("投递时间") or rec.get("created_time") or rec.get("created_at", 0)
+        if not ts:
+            continue
+        ct = _parse_ts_ms(ts, tz8)
+        if ct and start_ms <= ct < end_ms:
+            company = client.field_value(rec, "公司")
+            position = client.field_value(rec, "岗位")
+            label = f"{company} - {position}" if company else (position or "未命名")
+            today_items.append(label)
 
     if not today_items:
         return "今天还没有投递记录 📭"
@@ -435,16 +456,14 @@ def _get_days(record: dict, client: FeishuClient) -> int:
     formula_val = client.field_value(record, "投递天数")
     if formula_val and formula_val.replace(".", "").isdigit():
         return int(float(formula_val))
-    created = record.get("created_at") or record.get("created_time")
-    if created:
-        try:
-            if "T" in str(created):
-                dt = datetime.fromisoformat(str(created).replace("Z", "+00:00"))
-            else:
-                dt = datetime.fromtimestamp(int(created) / 1000, tz=timezone.utc)
+    # Fallback: fields.投递时间 > record created_time/created_at
+    fields = record.get("fields", {})
+    ts = fields.get("投递时间") or record.get("created_time") or record.get("created_at")
+    if ts:
+        ct = _parse_ts_ms(ts)
+        if ct:
+            dt = datetime.fromtimestamp(ct / 1000, tz=timezone.utc)
             return (datetime.now(timezone.utc) - dt).days
-        except (ValueError, OSError):
-            pass
     return 999
 
 
