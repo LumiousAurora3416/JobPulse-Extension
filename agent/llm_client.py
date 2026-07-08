@@ -122,7 +122,7 @@ class LLMClient:
                 },
                 json={
                     "model": self.model,
-                    "max_tokens": 500,
+                    "max_tokens": 2000,
                     "system": system_prompt,
                     "messages": [{"role": "user", "content": user_message}],
                 },
@@ -139,7 +139,7 @@ class LLMClient:
                     {"role": "system", "content": system_prompt},
                     {"role": "user", "content": user_message},
                 ],
-                "max_tokens": 500,
+                "max_tokens": 2000,
                 "temperature": 0.1,
             }
             payload["response_format"] = {"type": "json_object"}

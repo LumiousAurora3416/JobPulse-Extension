@@ -35,10 +35,10 @@ Intents:
 - record_interview: Recording or updating interview time for an application
   Examples: "字节周三下午两点面试" "腾讯后天上午十点面试" "帮我记下面试时间" "阿里云面试改到周五了"
   Extract: company (公司名, required), interview_time (面试时间, required, use YYYY-MM-DD HH:MM format in UTC+8), position (岗位名, optional)
-- create_record: Logging a new application the user just submitted
-  Examples: "投了字节前端" "刚在Boss投了快手" "记一下我投了腾讯"
-  DO NOT classify as create_record if the user is asking about an existing record. Use query_record instead.
-  Extract: company (公司名), position (岗位名), platform (平台名, optional)
+- create_record: Logging a new application the user just submitted. The user may briefly mention the job along with a description or requirements text.
+  Examples: "投了字节前端" "刚在Boss投了快手" "记一下我投了腾讯" "投了阿里云算法岗，主要做推荐系统" "今天投了美团后端，JD要熟悉Go和微服务"
+  DO NOT classify as create_record if the user is asking about an existing record's status. Use query_record instead.
+  Extract: company (公司名), position (岗位名), platform (平台名, optional), jd (岗位JD/职位描述文本, optional, extract any sentence describing job responsibilities or requirements after the job title)
 - update_status: Changing an application's follow-up status
   Examples: "腾讯有反馈了" "改成面试" "字节挂了" "美团有消息了"
   Extract: company (公司名), new_status (面试/无反馈/简历挂/已跟进)
@@ -356,6 +356,7 @@ def _execute_create(client: FeishuClient, params: dict) -> str:
     company = params.get("company", "")
     position = params.get("position", "")
     platform = params.get("platform", "")
+    jd = params.get("jd", "")
 
     if not company and not position:
         return "没识别到公司和岗位信息，麻烦说清楚一些，比如「我在Boss投了字节前端」"
@@ -383,6 +384,7 @@ def _execute_create(client: FeishuClient, params: dict) -> str:
     fields = {
         "公司": company,
         "岗位": position,
+        "岗位JD": jd,
         "结果": "简历",
         "提醒状态": "待跟进",
         "投递时间": today_ms,
@@ -398,6 +400,8 @@ def _execute_create(client: FeishuClient, params: dict) -> str:
         parts.append(position)
     if platform:
         parts.append(f"（{platform}）")
+    if jd:
+        parts.append("📄 已保存 JD")
 
     msg = " ".join(parts)
 
@@ -408,8 +412,10 @@ def _execute_create(client: FeishuClient, params: dict) -> str:
         missing.append("岗位名")
     if missing:
         msg += f"\n📌 缺少{'、'.join(missing)}，可以直接发给我补充"
+    elif not jd:
+        msg += "\n📌 没识别到 JD 描述，需要补充的话直接发给我就行"
     else:
-        msg += "\n需要补充 JD 的话直接发给我"
+        msg += "\n需要补充什么直接告诉我就好"
 
     return msg
 
