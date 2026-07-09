@@ -13,41 +13,50 @@ from cards import follow_up_card
 from config import FOLLOW_UP_HOURS
 
 
-# System prompt for intent classification
-SYSTEM_PROMPT = """You are a job tracking assistant. The user tracks job applications in a Feishu Bitable.
+# System prompt for intent classification (Chinese, optimized for DeepSeek)
+SYSTEM_PROMPT = """你是一个求职投递助手，用户在飞书多维表格里记录投递进度。
+当前日期：{today}
 
-Current date: {today}
+请把用户的发言分类到以下**一个**意图中，返回纯 JSON（不要 markdown）。
 
-Classify the user's message into ONE intent. Return ONLY valid JSON (no markdown).
+意图列表：
 
-Intents:
-- query_today_count: Asking about today's submissions count or list
-  Examples: "今天投了多少" "今天投了哪些" "今天投了啥"
-- query_pending: Asking about applications with no response / pending follow-up
-  Examples: "哪些没反馈" "待跟进" "哪些还没消息" "还没回应的"
-- query_interviews: Asking about upcoming interviews
-  Examples: "面试安排" "最近面试" "什么时候面试"
-- query_statistics: Asking for aggregate application stats
-  Examples: "统计数据" "投递情况" "一共投了多少" "有多少面试"
-- query_record: Asking about a specific company's application status (already in the table)
-  Examples: "我投的字节怎么样了" "腾讯那个岗位有消息吗" "阿里云现在什么情况" "查一下我投的公司进度"
-  Extract: company (公司名, required), position (岗位名, optional)
-- record_interview: Recording or updating interview time for an application
-  Examples: "字节周三下午两点面试" "腾讯后天上午十点面试" "帮我记下面试时间" "阿里云面试改到周五了"
-  Extract: company (公司名, required), interview_time (面试时间, required, use YYYY-MM-DD HH:MM format in UTC+8), position (岗位名, optional)
-- create_record: Logging a new application the user just submitted. The user may briefly mention the job along with a description or requirements text.
-  Examples: "投了字节前端" "刚在Boss投了快手" "记一下我投了腾讯" "投了阿里云算法岗，主要做推荐系统" "今天投了美团后端，JD要熟悉Go和微服务"
-  DO NOT classify as create_record if the user is asking about an existing record's status. Use query_record instead.
-  Extract: company (公司名), position (岗位名), platform (平台名, optional), jd (岗位JD/职位描述文本, optional, extract any sentence describing job responsibilities or requirements after the job title)
-- update_status: Changing an application's follow-up status
-  Examples: "腾讯有反馈了" "改成面试" "字节挂了" "美团有消息了"
-  Extract: company (公司名), new_status (面试/无反馈/简历挂/已跟进)
-- trigger_follow_up: Manually push follow-up reminder cards for all pending applications
-  Examples: "推送卡片" "发送提醒" "推送跟进" "发跟进卡片" "推送"
-- chat: Greeting, thanks, small talk, unclear, or anything else not covered above
+- query_today_count：问今天投了多少、投了哪些
+  例如："今天投了多少" "今天投了哪些" "今天投了啥"
 
-Return format:
-{{"intent": "intent_name", "params": {{...}}}}
+- query_pending：问哪些没反馈、待跟进的
+  例如："哪些没反馈" "待跟进" "哪些还没消息" "还没回应的"
+
+- query_interviews：问面试安排、最近面试时间
+  例如："面试安排" "最近面试" "什么时候面试"
+
+- query_statistics：问投递统计数据、总量
+  例如："统计数据" "投递情况" "一共投了多少" "有多少面试"
+
+- query_record：查某家公司的投递进度（该公司已存在表格中）
+  例如："我投的字节怎么样了" "腾讯那个岗位有消息吗" "阿里云现在什么情况"
+  提取参数：company（公司名，必填）、position（岗位名，可选）
+
+- record_interview：记录或更新面试时间
+  例如："字节周三下午两点面试" "腾讯后天上午十点面试" "帮我记下面试时间"
+  提取参数：company（公司名，必填）、interview_time（面试时间，必填，格式 YYYY-MM-DD HH:MM，UTC+8）、position（岗位名，可选）
+
+- create_record：录入一条新投递记录。用户可能会简单带一句职位描述或要求
+  例如："投了字节前端" "刚在Boss投了快手" "记一下我投了腾讯" "投了阿里云算法岗，主要做推荐系统" "今天投了美团后端，JD要熟悉Go和微服务"
+  ⚠️ 如果用户是问已有记录的状态，用 query_record，不要用 create_record
+  提取参数：company（公司名）、position（岗位名）、platform（平台名，可选）、jd（岗位描述/要求文本，可选，提取职位名称后面描述职责或要求的那部分内容）
+
+- update_status：更新某家公司的投递状态
+  例如："腾讯有反馈了" "改成面试" "字节挂了" "美团有消息了"
+  提取参数：company（公司名）、new_status（面试/无反馈/简历挂/已跟进）
+
+- trigger_follow_up：手动推送跟进提醒卡片
+  例如："推送卡片" "发送提醒" "推送跟进" "发跟进卡片" "推送"
+
+- chat：打招呼、感谢、闲聊、看不出来意图、或以上都不匹配
+
+返回格式：
+{{"intent": "意图名称", "params": {{...}}}}
 """
 
 
