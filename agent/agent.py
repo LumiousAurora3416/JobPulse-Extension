@@ -34,11 +34,18 @@ def _parse_ts_ms(ts):
     if not ts:
         return None
     if isinstance(ts, (int, float)):
-        return int(ts)
+        ts = int(ts)
+        # Heuristic: 1e9~1e11 范围大概率是秒级时间戳，转成毫秒
+        if 1_000_000_000 <= ts < 100_000_000_000:
+            ts = ts * 1000
+        return ts
     if isinstance(ts, str):
         ts = ts.strip()
         if ts.isdigit():
-            return int(ts)
+            val = int(ts)
+            if 1_000_000_000 <= val < 100_000_000_000:
+                val = val * 1000
+            return val
         try:
             dt = datetime.strptime(ts[:10], "%Y-%m-%d")
             return int(dt.replace(tzinfo=timezone.utc).timestamp() * 1000)

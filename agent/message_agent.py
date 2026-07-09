@@ -4,6 +4,7 @@ JobPulse Message Agent — 处理用户私聊消息
 """
 
 import json
+import re
 import time
 from datetime import datetime, timezone, timedelta
 
@@ -23,6 +24,10 @@ SYSTEM_PROMPT = """你是一个求职投递助手，用户在飞书多维表格�
 
 - query_today_count：问今天投了多少、投了哪些
   例如："今天投了多少" "今天投了哪些" "今天投了啥"
+- query_date_count：问某一天或某个时间段的投递记录（昨天、前天、某月某日）
+  例如："昨天投了多少" "昨天投了哪些" "前天投递" "7月8号投了啥"
+  ⚠️ "今天"相关用 query_today_count，不要分到这里
+  提取参数：date_ref（日期描述，必填，例如"昨天""前天""7月8号"）
 
 - query_pending：问哪些没反馈、待跟进的
   例如："哪些没反馈" "待跟进" "哪些还没消息" "还没回应的"
@@ -83,6 +88,8 @@ def handle_message(sender_id: str, message_text: str,
     try:
         if intent == "query_today_count":
             data = _query_today_count(client)
+        elif intent == "query_date_count":
+            data = _query_date_count(client, params.get("date_ref", ""))
         elif intent == "query_pending":
             data = _query_pending(client)
         elif intent == "query_interviews":
@@ -103,6 +110,7 @@ def handle_message(sender_id: str, message_text: str,
             data = (
                 "你好！我可以帮你：\n"
                 "📋 查询今天投递：「今天投了多少」\n"
+                "📅 查询某天投递：「昨天投了啥」\n"
                 "⏳ 查看待跟进：「哪些没反馈」\n"
                 "📅 面试安排：「最近面试」\n"
                 "📊 投递统计：「统计数据」\n"
@@ -127,12 +135,19 @@ def _parse_ts_ms(ts, tz=timezone.utc):
     if not ts:
         return None
     if isinstance(ts, (int, float)):
-        return int(ts)
+        ts = int(ts)
+        # Heuristic: 1e9~1e11 范围大概率是秒级时间戳，转成毫秒
+        if 1_000_000_000 <= ts < 100_000_000_000:
+            ts = ts * 1000
+        return ts
     if isinstance(ts, str):
         ts = ts.strip()
         # Pure numeric string (ms or s timestamp)
         if ts.isdigit():
-            return int(ts)
+            val = int(ts)
+            if 1_000_000_000 <= val < 100_000_000_000:
+                val = val * 1000
+            return val
         # Date string "YYYY-MM-DD" or "YYYY-MM-DD HH:MM"
         try:
             dt = datetime.strptime(ts[:10], "%Y-%m-%d")
@@ -196,6 +211,65 @@ def _query_today_count(client: FeishuClient) -> str:
 
     header = f"📋 今天投了 {len(today_items)} 份："
     return header + "\n" + "\n".join(f"  {i+1}. {item}" for i, item in enumerate(today_items))
+
+
+def _query_date_count(client: FeishuClient, date_ref: str) -> str:
+    """Query submissions for a specific date reference (昨天/前天/date string)."""
+    if not date_ref:
+        return "你想查哪天的投递？比如「昨天投了啥」「前天投递」"
+
+    tz8 = timezone(timedelta(hours=8))
+    now = datetime.now(tz8)
+    today = now.replace(hour=0, minute=0, second=0, microsecond=0)
+
+    # Parse date reference
+    target = None
+    label = date_ref.strip()
+    ref = label
+
+    if ref in ("昨天", "昨日"):
+        target = today - timedelta(days=1)
+        label = "昨天"
+    elif ref in ("前天", "前日"):
+        target = today - timedelta(days=2)
+        label = "前天"
+    elif re.match(r"^\d{4}-\d{2}-\d{2}$", ref):
+        try:
+            target = datetime.strptime(ref, "%Y-%m-%d").replace(tzinfo=tz8)
+            label = ref
+        except ValueError:
+            pass
+    elif "月" in ref and ("号" in ref or "日" in ref):
+        m = re.match(r"(\d{1,2})月(\d{1,2})[号日]", ref)
+        if m:
+            target = today.replace(month=int(m.group(1)), day=int(m.group(2)))
+            label = ref
+
+    if target is None:
+        return f"没看明白「{date_ref}」是哪天，试试说「昨天投了多少」「前天投递」"
+
+    start_ms = int(target.timestamp() * 1000)
+    end_ms = int((target + timedelta(days=1)).timestamp() * 1000)
+
+    records = client.list_records()
+    items = []
+    for rec in records:
+        fields = rec.get("fields", {})
+        ts = fields.get("投递时间") or rec.get("created_time") or rec.get("created_at", 0)
+        if not ts:
+            continue
+        ct = _parse_ts_ms(ts, tz8)
+        if ct and start_ms <= ct < end_ms:
+            company = client.field_value(rec, "公司")
+            position = client.field_value(rec, "岗位")
+            label_str = f"{company} - {position}" if company else (position or "未命名")
+            items.append(label_str)
+
+    if not items:
+        return f"📭 {label}没有投递记录"
+
+    header = f"📋 {label}投了 {len(items)} 份："
+    return header + "\n" + "\n".join(f"  {i+1}. {item}" for i, item in enumerate(items))
 
 
 def _query_pending(client: FeishuClient) -> str:
