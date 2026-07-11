@@ -132,6 +132,7 @@ python agent.py --full         # 同时执行追踪 + 分析
 | 面试时间 | 日期 | 面试提醒功能使用 |
 | 是否复盘 | 复选框 | 面试后是否已完成复盘（待实现） |
 | 复盘笔记 | 文本 | 面试复盘记录（待实现） |
+| 薪资 | 文本 | 插件自动抓取（BOSS直聘）或弹窗手动输入 |
 
 ---
 
@@ -159,7 +160,9 @@ python agent.py --full         # 同时执行追踪 + 分析
 - [x] **开源准备**：git 历史清洗、PROJECT_REVIEW.md 本地化、README 更新
 
 ### 第四阶段：全链路求职追踪
-- [ ] **面试题预测**：LLM 读 JD 生成高频面试题，面试前推送
+- [x] **bot 对话录入带 JD**：create_record 支持提取职位描述，写入岗位JD 字段
+- [x] **意图识别优化**：中文提示词适配 DeepSeek V4，新增 query_date_count（昨天/前天查询）
+- [x] **时间戳兼容**：修复飞书日期字段秒级/毫秒级格式兼容问题
 - [ ] **面试题预测**：LLM 读 JD 生成高频面试题，面试前推送
 - [ ] **岗位匹配度评分** `--match`：LLM 对比简历文本与 JD，输出匹配度分数和改进建议
 - [ ] **拒信归因**：`rejection_insight_card` 卡片模板已就绪，需接入 Agent 自动识别被拒记录并做 LLM 归因
@@ -193,9 +196,10 @@ PROJECT_REVIEW.md 本质是**你的面试作品集级复盘文档**，受众是�
 ## 已知的坑
 
 ### 插件 & 页面抓取
-- React SPA 页面（如快手招聘）内容动态渲染，岗位名可能在 `div` 而非 `h1/h2` 中
+- React SPA 页面（如快手招聘、Mokahr 校招）内容动态渲染，岗位名可能在 `div` / `span` / `h3` 而非 `h1/h2` 中，CSS 选择器需持续补充
 - BOSS直聘有 CSS 反爬干扰文本（display:none / opacity:0），需 getComputedStyle 过滤
 - 页面标题分割提取岗位名时，公司名可能误占岗位位，需评分制+岗位关键词加权
+- `[class*="post-title"]` 不匹配 `position-title`（子串不包含 "post-title"），双 attribute 选择器 `[class*="position"][class*="title"]` 更可靠
 
 ### 飞书集成
 - 飞书自建应用的权限开通后必须**发布新版本**才生效

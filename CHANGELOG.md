@@ -1,6 +1,29 @@
 # Changelog
 
-## v1.3.0 (2026-07-05)
+## v1.4.0 (2026-07-11)
+
+### 新增
+- **bot 对话录入投递时支持保存岗位 JD**：create_record 意图新增 `jd` 参数，LLM 从用户的自然语言中提取职位描述并写入「岗位JD」字段
+- **昨天/前天投递查询**：新增 `query_date_count` 意图，支持「昨天投了多少」「前天投递」「7月8号投了啥」
+- **「推送卡片」手动指令**：飞书对话可直接触发跟进提醒卡片推送
+
+### 修复
+- **Agent 今日投递计数始终为空**：根因是 `_query_today_count` 从记录顶层读 `created_time`，但飞书列表 API 可能不返回该字段。改为优先从 `fields.投递时间` 读取，兼容多种格式
+- **`_get_days` / `get_days_since` 天数计算不准**：同样改为优先读 `fields.投递时间`
+- **飞书时间戳格式兼容**：`_parse_ts_ms` 加入秒级→毫秒级自动转换（1e9~1e11 范围启发式识别），解决飞书日期字段返回秒级时间戳导致比较失败的问题
+- **Mokahr 页面公司名和岗位名抓不到**：添加 58→58同城 公司映射；补充 Mokahr SPA 岗位 CSS 选择器（apply-position/recruit-name/campus-name/position-title）；扩展 detail 容器内 h1/h2/h3 兜底提取
+
+### 变更
+- **意图识别提示词全部改为中文**：优化 DeepSeek V4 的中文理解能力
+- **LLM classify 方法健壮化**：支持不带 `response_format` 回退；`_extract_json` 支持从 markdown 代码块和文本中搜索 JSON 对象
+- `classify` 的 `max_tokens` 从 500 提至 2000，防止长 JD 被截断
+- 已推送的卡片消息 ID 同时写入飞书表格「消息ID」字段和本地文件，回调时双路回退
+
+### 技术栈
+| 层 | 技术 |
+|---|---|
+| LLM 意图分类 | DeepSeek V4（中文提示词） |
+| API 推送 | GitHub API（git data API 绕过网络限制） |
 
 ### 新增
 - **飞书机器人对话全面增强**：新增 `query_record`（查进度）、`record_interview`（记面试时间）意图
