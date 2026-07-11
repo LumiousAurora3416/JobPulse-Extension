@@ -4,6 +4,7 @@ JobPulse Message Agent — 处理用户私聊消息
 """
 
 import json
+import re
 import time
 from datetime import datetime, timezone, timedelta
 
@@ -13,41 +14,54 @@ from cards import follow_up_card
 from config import FOLLOW_UP_HOURS
 
 
-# System prompt for intent classification
-SYSTEM_PROMPT = """You are a job tracking assistant. The user tracks job applications in a Feishu Bitable.
+# System prompt for intent classification (Chinese, optimized for DeepSeek)
+SYSTEM_PROMPT = """你是一个求职投递助手，用户在飞书多维表格里记录投递进度。
+当前日期：{today}
 
-Current date: {today}
+请把用户的发言分类到以下**一个**意图中，返回纯 JSON（不要 markdown）。
 
-Classify the user's message into ONE intent. Return ONLY valid JSON (no markdown).
+意图列表：
 
-Intents:
-- query_today_count: Asking about today's submissions count or list
-  Examples: "今天投了多少" "今天投了哪些" "今天投了啥"
-- query_pending: Asking about applications with no response / pending follow-up
-  Examples: "哪些没反馈" "待跟进" "哪些还没消息" "还没回应的"
-- query_interviews: Asking about upcoming interviews
-  Examples: "面试安排" "最近面试" "什么时候面试"
-- query_statistics: Asking for aggregate application stats
-  Examples: "统计数据" "投递情况" "一共投了多少" "有多少面试"
-- query_record: Asking about a specific company's application status (already in the table)
-  Examples: "我投的字节怎么样了" "腾讯那个岗位有消息吗" "阿里云现在什么情况" "查一下我投的公司进度"
-  Extract: company (公司名, required), position (岗位名, optional)
-- record_interview: Recording or updating interview time for an application
-  Examples: "字节周三下午两点面试" "腾讯后天上午十点面试" "帮我记下面试时间" "阿里云面试改到周五了"
-  Extract: company (公司名, required), interview_time (面试时间, required, use YYYY-MM-DD HH:MM format in UTC+8), position (岗位名, optional)
-- create_record: Logging a new application the user just submitted
-  Examples: "投了字节前端" "刚在Boss投了快手" "记一下我投了腾讯"
-  DO NOT classify as create_record if the user is asking about an existing record. Use query_record instead.
-  Extract: company (公司名), position (岗位名), platform (平台名, optional)
-- update_status: Changing an application's follow-up status
-  Examples: "腾讯有反馈了" "改成面试" "字节挂了" "美团有消息了"
-  Extract: company (公司名), new_status (面试/无反馈/简历挂/已跟进)
-- trigger_follow_up: Manually push follow-up reminder cards for all pending applications
-  Examples: "推送卡片" "发送提醒" "推送跟进" "发跟进卡片" "推送"
-- chat: Greeting, thanks, small talk, unclear, or anything else not covered above
+- query_today_count：问今天投了多少、投了哪些
+  例如："今天投了多少" "今天投了哪些" "今天投了啥"
+- query_date_count：问某一天或某个时间段的投递记录（昨天、前天、某月某日）
+  例如："昨天投了多少" "昨天投了哪些" "前天投递" "7月8号投了啥"
+  ⚠️ "今天"相关用 query_today_count，不要分到这里
+  提取参数：date_ref（日期描述，必填，例如"昨天""前天""7月8号"）
 
-Return format:
-{{"intent": "intent_name", "params": {{...}}}}
+- query_pending：问哪些没反馈、待跟进的
+  例如："哪些没反馈" "待跟进" "哪些还没消息" "还没回应的"
+
+- query_interviews：问面试安排、最近面试时间
+  例如："面试安排" "最近面试" "什么时候面试"
+
+- query_statistics：问投递统计数据、总量
+  例如："统计数据" "投递情况" "一共投了多少" "有多少面试"
+
+- query_record：查某家公司的投递进度（该公司已存在表格中）
+  例如："我投的字节怎么样了" "腾讯那个岗位有消息吗" "阿里云现在什么情况"
+  提取参数：company（公司名，必填）、position（岗位名，可选）
+
+- record_interview：记录或更新面试时间
+  例如："字节周三下午两点面试" "腾讯后天上午十点面试" "帮我记下面试时间"
+  提取参数：company（公司名，必填）、interview_time（面试时间，必填，格式 YYYY-MM-DD HH:MM，UTC+8）、position（岗位名，可选）
+
+- create_record：录入一条新投递记录。用户可能会简单带一句职位描述或要求
+  例如："投了字节前端" "刚在Boss投了快手" "记一下我投了腾讯" "投了阿里云算法岗，主要做推荐系统" "今天投了美团后端，JD要熟悉Go和微服务"
+  ⚠️ 如果用户是问已有记录的状态，用 query_record，不要用 create_record
+  提取参数：company（公司名）、position（岗位名）、platform（平台名，可选）、jd（岗位描述/要求文本，可选，提取职位名称后面描述职责或要求的那部分内容）
+
+- update_status：更新某家公司的投递状态
+  例如："腾讯有反馈了" "改成面试" "字节挂了" "美团有消息了"
+  提取参数：company（公司名）、new_status（面试/无反馈/简历挂/已跟进）
+
+- trigger_follow_up：手动推送跟进提醒卡片
+  例如："推送卡片" "发送提醒" "推送跟进" "发跟进卡片" "推送"
+
+- chat：打招呼、感谢、闲聊、看不出来意图、或以上都不匹配
+
+返回格式：
+{{"intent": "意图名称", "params": {{...}}}}
 """
 
 
@@ -74,6 +88,8 @@ def handle_message(sender_id: str, message_text: str,
     try:
         if intent == "query_today_count":
             data = _query_today_count(client)
+        elif intent == "query_date_count":
+            data = _query_date_count(client, params.get("date_ref", ""))
         elif intent == "query_pending":
             data = _query_pending(client)
         elif intent == "query_interviews":
@@ -94,6 +110,7 @@ def handle_message(sender_id: str, message_text: str,
             data = (
                 "你好！我可以帮你：\n"
                 "📋 查询今天投递：「今天投了多少」\n"
+                "📅 查询某天投递：「昨天投了啥」\n"
                 "⏳ 查看待跟进：「哪些没反馈」\n"
                 "📅 面试安排：「最近面试」\n"
                 "📊 投递统计：「统计数据」\n"
@@ -111,6 +128,33 @@ def handle_message(sender_id: str, message_text: str,
 
 
 # ── Helpers ──────────────────────────────────────────
+
+
+def _parse_ts_ms(ts, tz=timezone.utc):
+    """Parse various timestamp/date formats to ms since epoch. Returns None on failure."""
+    if not ts:
+        return None
+    if isinstance(ts, (int, float)):
+        ts = int(ts)
+        # Heuristic: 1e9~1e11 范围大概率是秒级时间戳，转成毫秒
+        if 1_000_000_000 <= ts < 100_000_000_000:
+            ts = ts * 1000
+        return ts
+    if isinstance(ts, str):
+        ts = ts.strip()
+        # Pure numeric string (ms or s timestamp)
+        if ts.isdigit():
+            val = int(ts)
+            if 1_000_000_000 <= val < 100_000_000_000:
+                val = val * 1000
+            return val
+        # Date string "YYYY-MM-DD" or "YYYY-MM-DD HH:MM"
+        try:
+            dt = datetime.strptime(ts[:10], "%Y-%m-%d")
+            return int(dt.replace(tzinfo=tz).timestamp() * 1000)
+        except (ValueError, IndexError):
+            pass
+    return None
 
 
 def _reply(client: FeishuClient, to: str, text: str, id_type: str):
@@ -150,22 +194,82 @@ def _query_today_count(client: FeishuClient) -> str:
 
     today_items = []
     for rec in records:
-        created = rec.get("created_at") or rec.get("created_time", 0)
-        try:
-            ct = int(created)
-            if start_ms <= ct < end_ms:
-                company = client.field_value(rec, "公司")
-                position = client.field_value(rec, "岗位")
-                label = f"{company} - {position}" if company else (position or "未命名")
-                today_items.append(label)
-        except (ValueError, TypeError):
-            pass
+        # Priority: fields.投递时间 > record created_time > record created_at
+        fields = rec.get("fields", {})
+        ts = fields.get("投递时间") or rec.get("created_time") or rec.get("created_at", 0)
+        if not ts:
+            continue
+        ct = _parse_ts_ms(ts, tz8)
+        if ct and start_ms <= ct < end_ms:
+            company = client.field_value(rec, "公司")
+            position = client.field_value(rec, "岗位")
+            label = f"{company} - {position}" if company else (position or "未命名")
+            today_items.append(label)
 
     if not today_items:
         return "今天还没有投递记录 📭"
 
     header = f"📋 今天投了 {len(today_items)} 份："
     return header + "\n" + "\n".join(f"  {i+1}. {item}" for i, item in enumerate(today_items))
+
+
+def _query_date_count(client: FeishuClient, date_ref: str) -> str:
+    """Query submissions for a specific date reference (昨天/前天/date string)."""
+    if not date_ref:
+        return "你想查哪天的投递？比如「昨天投了啥」「前天投递」"
+
+    tz8 = timezone(timedelta(hours=8))
+    now = datetime.now(tz8)
+    today = now.replace(hour=0, minute=0, second=0, microsecond=0)
+
+    # Parse date reference
+    target = None
+    label = date_ref.strip()
+    ref = label
+
+    if ref in ("昨天", "昨日"):
+        target = today - timedelta(days=1)
+        label = "昨天"
+    elif ref in ("前天", "前日"):
+        target = today - timedelta(days=2)
+        label = "前天"
+    elif re.match(r"^\d{4}-\d{2}-\d{2}$", ref):
+        try:
+            target = datetime.strptime(ref, "%Y-%m-%d").replace(tzinfo=tz8)
+            label = ref
+        except ValueError:
+            pass
+    elif "月" in ref and ("号" in ref or "日" in ref):
+        m = re.match(r"(\d{1,2})月(\d{1,2})[号日]", ref)
+        if m:
+            target = today.replace(month=int(m.group(1)), day=int(m.group(2)))
+            label = ref
+
+    if target is None:
+        return f"没看明白「{date_ref}」是哪天，试试说「昨天投了多少」「前天投递」"
+
+    start_ms = int(target.timestamp() * 1000)
+    end_ms = int((target + timedelta(days=1)).timestamp() * 1000)
+
+    records = client.list_records()
+    items = []
+    for rec in records:
+        fields = rec.get("fields", {})
+        ts = fields.get("投递时间") or rec.get("created_time") or rec.get("created_at", 0)
+        if not ts:
+            continue
+        ct = _parse_ts_ms(ts, tz8)
+        if ct and start_ms <= ct < end_ms:
+            company = client.field_value(rec, "公司")
+            position = client.field_value(rec, "岗位")
+            label_str = f"{company} - {position}" if company else (position or "未命名")
+            items.append(label_str)
+
+    if not items:
+        return f"📭 {label}没有投递记录"
+
+    header = f"📋 {label}投了 {len(items)} 份："
+    return header + "\n" + "\n".join(f"  {i+1}. {item}" for i, item in enumerate(items))
 
 
 def _query_pending(client: FeishuClient) -> str:
@@ -335,6 +439,7 @@ def _execute_create(client: FeishuClient, params: dict) -> str:
     company = params.get("company", "")
     position = params.get("position", "")
     platform = params.get("platform", "")
+    jd = params.get("jd", "")
 
     if not company and not position:
         return "没识别到公司和岗位信息，麻烦说清楚一些，比如「我在Boss投了字节前端」"
@@ -362,6 +467,7 @@ def _execute_create(client: FeishuClient, params: dict) -> str:
     fields = {
         "公司": company,
         "岗位": position,
+        "岗位JD": jd,
         "结果": "简历",
         "提醒状态": "待跟进",
         "投递时间": today_ms,
@@ -377,6 +483,8 @@ def _execute_create(client: FeishuClient, params: dict) -> str:
         parts.append(position)
     if platform:
         parts.append(f"（{platform}）")
+    if jd:
+        parts.append("📄 已保存 JD")
 
     msg = " ".join(parts)
 
@@ -387,8 +495,10 @@ def _execute_create(client: FeishuClient, params: dict) -> str:
         missing.append("岗位名")
     if missing:
         msg += f"\n📌 缺少{'、'.join(missing)}，可以直接发给我补充"
+    elif not jd:
+        msg += "\n📌 没识别到 JD 描述，需要补充的话直接发给我就行"
     else:
-        msg += "\n需要补充 JD 的话直接发给我"
+        msg += "\n需要补充什么直接告诉我就好"
 
     return msg
 
@@ -435,16 +545,14 @@ def _get_days(record: dict, client: FeishuClient) -> int:
     formula_val = client.field_value(record, "投递天数")
     if formula_val and formula_val.replace(".", "").isdigit():
         return int(float(formula_val))
-    created = record.get("created_at") or record.get("created_time")
-    if created:
-        try:
-            if "T" in str(created):
-                dt = datetime.fromisoformat(str(created).replace("Z", "+00:00"))
-            else:
-                dt = datetime.fromtimestamp(int(created) / 1000, tz=timezone.utc)
+    # Fallback: fields.投递时间 > record created_time/created_at
+    fields = record.get("fields", {})
+    ts = fields.get("投递时间") or record.get("created_time") or record.get("created_at")
+    if ts:
+        ct = _parse_ts_ms(ts)
+        if ct:
+            dt = datetime.fromtimestamp(ct / 1000, tz=timezone.utc)
             return (datetime.now(timezone.utc) - dt).days
-        except (ValueError, OSError):
-            pass
     return 999
 
 

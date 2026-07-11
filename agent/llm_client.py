@@ -104,6 +104,42 @@ class LLMClient:
 
         return {"summary": summary.strip(), "insights": insights[:10]}
 
+    def _extract_json(self, text: str) -> dict:
+        """Extract JSON from LLM response, checking code fences and loose braces."""
+        text = text.strip()
+        # Remove markdown code fences (```json ... ``` or ``` ... ```)
+        if text.startswith("```"):
+            text = text.split("\n", 1)[-1] if "\n" in text else text[3:]
+            if text.endswith("```"):
+                text = text[:-3]
+        text = text.strip()
+
+        # Try parsing directly
+        try:
+            return json.loads(text)
+        except json.JSONDecodeError:
+            pass
+
+        # Search for JSON object in text (first { to matching })
+        stack = []
+        start = -1
+        for i, ch in enumerate(text):
+            if ch == "{":
+                if start < 0:
+                    start = i
+                stack.append("{")
+            elif ch == "}":
+                if stack:
+                    stack.pop()
+                    if not stack and start >= 0:
+                        candidate = text[start : i + 1]
+                        try:
+                            return json.loads(candidate)
+                        except json.JSONDecodeError:
+                            pass
+                        start = -1
+        raise RuntimeError(f"LLM 返回无法解析的 JSON: {text[:300]}...")
+
     def classify(self, system_prompt: str, user_message: str) -> dict:
         """Call LLM for structured JSON output (intent classification).
         Uses low temperature for consistent results."""
@@ -113,36 +149,51 @@ class LLMClient:
         import requests
 
         if "anthropic" in self.api_base:
-            resp = requests.post(
-                f"{self.api_base}/messages",
-                headers={
-                    "x-api-key": self.api_key,
-                    "anthropic-version": "2023-06-01",
-                    "Content-Type": "application/json",
-                },
-                json={
-                    "model": self.model,
-                    "max_tokens": 500,
-                    "system": system_prompt,
-                    "messages": [{"role": "user", "content": user_message}],
-                },
-                timeout=15,
-            )
-            data = resp.json()
-            if "error" in data:
-                raise RuntimeError(f"LLM API 错误: {data['error']}")
-            content = data["content"][0]["text"]
-        else:
-            payload = {
+            return self._classify_anthropic(system_prompt, user_message)
+        return self._classify_openai(system_prompt, user_message)
+
+    def _classify_anthropic(self, system_prompt: str, user_message: str) -> dict:
+        import requests
+
+        resp = requests.post(
+            f"{self.api_base}/messages",
+            headers={
+                "x-api-key": self.api_key,
+                "anthropic-version": "2023-06-01",
+                "Content-Type": "application/json",
+            },
+            json={
                 "model": self.model,
-                "messages": [
-                    {"role": "system", "content": system_prompt},
-                    {"role": "user", "content": user_message},
-                ],
-                "max_tokens": 500,
-                "temperature": 0.1,
-            }
-            payload["response_format"] = {"type": "json_object"}
+                "max_tokens": 2000,
+                "system": system_prompt,
+                "messages": [{"role": "user", "content": user_message}],
+            },
+            timeout=15,
+        )
+        data = resp.json()
+        if "error" in data:
+            raise RuntimeError(f"LLM API 错误: {data['error']}")
+        content = data["content"][0]["text"]
+        return self._extract_json(content)
+
+    def _classify_openai(self, system_prompt: str, user_message: str) -> dict:
+        import requests
+
+        # Try with response_format first (OpenAI / DeepSeek compatible)
+        payload = {
+            "model": self.model,
+            "messages": [
+                {"role": "system", "content": system_prompt},
+                {"role": "user", "content": user_message},
+            ],
+            "max_tokens": 2000,
+            "temperature": 0.1,
+        }
+
+        for attempt in range(2):
+            body = dict(payload)
+            if attempt == 0:
+                body["response_format"] = {"type": "json_object"}
 
             resp = requests.post(
                 f"{self.api_base}/chat/completions",
@@ -150,23 +201,22 @@ class LLMClient:
                     "Authorization": f"Bearer {self.api_key}",
                     "Content-Type": "application/json",
                 },
-                json=payload,
+                json=body,
                 timeout=15,
             )
             data = resp.json()
             if "error" in data:
+                err_msg = str(data.get("error", {}))
+                # If response_format is not supported, fall through to retry without it
+                if attempt == 0 and ("response_format" in err_msg or "invalid" in err_msg.lower() or "not supported" in err_msg.lower()):
+                    continue
                 raise RuntimeError(f"LLM API 错误: {data['error']}")
+
             content = data["choices"][0]["message"]["content"]
-
-        # Parse JSON, handling possible markdown fences
-        content = content.strip()
-        if content.startswith("```"):
-            content = content.split("\n", 1)[-1] if "\n" in content else content[3:]
-            if content.endswith("```"):
-                content = content[:-3]
-        content = content.strip()
-
-        try:
-            return json.loads(content)
-        except json.JSONDecodeError as e:
-            raise RuntimeError(f"LLM 返回无法解析的 JSON: {content[:200]}... ({e})")
+            try:
+                return self._extract_json(content)
+            except RuntimeError:
+                if attempt == 0:
+                    continue
+                raise
+        raise RuntimeError(f"LLM 返回无法解析的 JSON: {content[:300]}...")

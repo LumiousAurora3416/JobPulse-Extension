@@ -29,6 +29,31 @@ from feishu import FeishuClient
 from cards import follow_up_card, analysis_card, stats_card, interview_reminder_card
 
 
+def _parse_ts_ms(ts):
+    """Parse various timestamp/date formats to ms since epoch. Returns None on failure."""
+    if not ts:
+        return None
+    if isinstance(ts, (int, float)):
+        ts = int(ts)
+        # Heuristic: 1e9~1e11 范围大概率是秒级时间戳，转成毫秒
+        if 1_000_000_000 <= ts < 100_000_000_000:
+            ts = ts * 1000
+        return ts
+    if isinstance(ts, str):
+        ts = ts.strip()
+        if ts.isdigit():
+            val = int(ts)
+            if 1_000_000_000 <= val < 100_000_000_000:
+                val = val * 1000
+            return val
+        try:
+            dt = datetime.strptime(ts[:10], "%Y-%m-%d")
+            return int(dt.replace(tzinfo=timezone.utc).timestamp() * 1000)
+        except (ValueError, IndexError):
+            pass
+    return None
+
+
 def get_days_since(record: dict, client: FeishuClient) -> int:
     """从投递天数字段获取天数，或根据 record 创建时间估算。
     无法确定时返回 999（宁可多提醒不漏提醒）"""
@@ -36,17 +61,14 @@ def get_days_since(record: dict, client: FeishuClient) -> int:
     if formula_val and formula_val.replace(".", "").isdigit():
         return int(float(formula_val))
 
-    # 飞书每条记录有 create_time
-    created = record.get("created_at") or record.get("created_time")
-    if created:
-        try:
-            if "T" in str(created):
-                dt = datetime.fromisoformat(str(created).replace("Z", "+00:00"))
-            else:
-                dt = datetime.fromtimestamp(int(created) / 1000, tz=timezone.utc)
+    # Fallback: fields.投递时间 > record created_time/created_at
+    fields = record.get("fields", {})
+    ts = fields.get("投递时间") or record.get("created_time") or record.get("created_at")
+    if ts:
+        ct = _parse_ts_ms(ts)
+        if ct:
+            dt = datetime.fromtimestamp(ct / 1000, tz=timezone.utc)
             return (datetime.now(timezone.utc) - dt).days
-        except (ValueError, OSError):
-            pass
     return 999  # fallback: 无法确定天数时默认需要跟进
 
 
