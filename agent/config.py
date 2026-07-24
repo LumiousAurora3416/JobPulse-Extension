@@ -1,9 +1,19 @@
 """JobPulse Agent 配置
-优先级：环境变量 > 下方默认值
-将本文件复制为 config.local.py 并填入敏感信息，避免提交到仓库
+优先级：环境变量 > .env 文件 > 下方默认值
+运行时自动加载 agent/.env（仅限本地，不上传 GitHub）
 """
 
 import os
+from pathlib import Path
+
+try:
+    from dotenv import load_dotenv
+    # Load .env from the same directory as this config file
+    env_path = Path(__file__).parent / ".env"
+    if env_path.exists():
+        load_dotenv(env_path)
+except ImportError:
+    pass  # dotenv not installed, rely on env vars only
 
 
 def env(key, default=""):
