@@ -19,6 +19,7 @@ from llm_client import LLMClient
 from cards import follow_up_card
 from config import FOLLOW_UP_HOURS
 from memory import append_turn, get_history
+from profile import get_profile, upsert_facts, format_profile
 
 
 # ── Agent 系统提示词（function calling 模式） ──────────────────
@@ -41,6 +42,11 @@ AGENT_SYSTEM_PROMPT = """你是 JobPulse 求职投递助手，帮助用户在飞
 5. 涉及具体日期时，以当前日期 {today} 为基准换算「昨天」「后天」等说法。
 6. 用户只是闲聊、打招呼、道谢，或意图不明确时，直接自然回复即可，不要调用工具。
 7. 查询结果为空时，如实说明，并给用户下一步建议。
+
+# 长期记忆
+- 用户提到的长期偏好/背景（主要投什么方向、所在城市、技能栈、工作年限等）用 save_memory 记住，跨会话保留。
+- 需要结合用户背景回答（如推荐投递方向、给建议）时，先调用 recall_memory 取回画像。
+- 不要用 save_memory 记录一次性事件（如「今天投了字节」）。
 """
 
 # 旧意图分类提示词（仅作降级路径保留）
@@ -441,6 +447,27 @@ def _trigger_follow_up(ctx, **kwargs) -> dict:
     return {"ok": True, "count": len(pending), "sent": sent}
 
 
+def _save_memory(ctx, **kwargs) -> dict:
+    """记住用户长期偏好（跨会话保留）。"""
+    sender_id = ctx["sender_id"]
+    facts = kwargs.get("facts") or []
+    valid = [f for f in facts
+             if (f.get("key") or "").strip() and (f.get("value") or "").strip()]
+    if not valid:
+        return {"ok": False, "error": "没有要记住的内容，告诉我你的偏好，比如「我主要投前端」"}
+    profile = upsert_facts(sender_id, valid)
+    return {"ok": True, "saved": len(valid), "profile": profile}
+
+
+def _recall_memory(ctx, **kwargs) -> dict:
+    """取回用户长期偏好画像。"""
+    sender_id = ctx["sender_id"]
+    entry = get_profile(sender_id)
+    profile = entry.get("profile") or {}
+    return {"ok": True, "has_profile": bool(profile), "profile": profile,
+            "summary": format_profile(profile)}
+
+
 # ── 工具注册表（LLM 可见的 function schema） ────────────────────
 
 TOOLS: dict[str, dict] = {
@@ -548,6 +575,32 @@ TOOLS: dict[str, dict] = {
         "schema": {"type": "function", "function": {
             "name": "trigger_follow_up",
             "description": "手动推送所有待跟进投递的跟进提醒卡片",
+            "parameters": {"type": "object", "properties": {}, "required": []},
+        }},
+    },
+    "save_memory": {
+        "function": _save_memory,
+        "schema": {"type": "function", "function": {
+            "name": "save_memory",
+            "description": "记住用户长期偏好或背景信息，跨会话保留。当用户明确说「我主要投XX」「坐标XX」「技能栈是XX」「工作X年」这类信息时调用。不要用它记录一次性投递事件。",
+            "parameters": {"type": "object",
+                "properties": {
+                    "facts": {"type": "array", "description": "要记住的偏好条目",
+                        "items": {"type": "object",
+                            "properties": {
+                                "key": {"type": "string", "description": "字段名，如 目标方向/所在城市/技能栈/工作经验/求职阶段"},
+                                "value": {"type": "string", "description": "内容，如 前端/杭州/Vue、React/3年社招"},
+                            },
+                            "required": ["key", "value"]}},
+                },
+                "required": ["facts"]},
+        }},
+    },
+    "recall_memory": {
+        "function": _recall_memory,
+        "schema": {"type": "function", "function": {
+            "name": "recall_memory",
+            "description": "取回该用户的长期偏好画像（目标方向/所在城市/技能栈等），在需要结合用户背景回答问题、给建议时先调用",
             "parameters": {"type": "object", "properties": {}, "required": []},
         }},
     },

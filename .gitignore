@@ -30,6 +30,8 @@ agent/config.local.py
 # Runtime data
 agent/message_store.json
 agent/conversation_store.json
+agent/user_profile.json
+agent/resume.txt
 
 # R
 .Rhistory
