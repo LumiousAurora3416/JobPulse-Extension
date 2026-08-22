@@ -29,6 +29,7 @@ agent/config.local.py
 
 # Runtime data
 agent/message_store.json
+agent/conversation_store.json
 
 # R
 .Rhistory

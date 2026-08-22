@@ -24,6 +24,76 @@ class LLMClient:
             return self._chat_anthropic(prompt)
         return self._chat_openai(prompt)
 
+    def chat_with_tools(self, messages, tools, executor=None,
+                        max_tool_calls=8, temperature=0.7, timeout=60) -> str:
+        """完整 tool-use 循环：LLM 自主决定调用工具，返回最终自然语言回复。
+
+        messages: [{"role": "system", ...}, ...历史..., {"role": "user", "content": 当前消息}]
+        tools:    OpenAI 函数 schema 列表
+        executor: callable(tool_name, args_dict) -> dict，返回 {"ok": bool, ...}
+        """
+        if "anthropic" in self.api_base:
+            raise RuntimeError("当前 LLM_API_BASE 不支持 function calling，请使用 OpenAI 兼容端点（如 DeepSeek）")
+
+        import copy
+        import requests
+
+        if executor is None:
+            def executor(name, args):
+                return {"ok": False, "error": "未提供工具执行器"}
+
+        history = copy.deepcopy(messages)
+
+        for _ in range(max_tool_calls + 1):
+            payload = {
+                "model": self.model,
+                "messages": history,
+                "tools": tools,
+                "tool_choice": "auto",
+                "temperature": temperature,
+            }
+            resp = requests.post(
+                f"{self.api_base}/chat/completions",
+                headers={"Authorization": f"Bearer {self.api_key}", "Content-Type": "application/json"},
+                json=payload,
+                timeout=timeout,
+            )
+            data = resp.json()
+            if "error" in data:
+                raise RuntimeError(f"LLM API 错误: {data['error']}")
+
+            msg = data["choices"][0]["message"]
+
+            # 原样回传 assistant 消息（含 tool_calls），供下一轮请求使用
+            assistant_msg = {"role": "assistant", "content": msg.get("content")}
+            if msg.get("tool_calls"):
+                assistant_msg["tool_calls"] = msg["tool_calls"]
+            history.append(assistant_msg)
+
+            if not msg.get("tool_calls"):
+                # 无工具调用，即最终回复
+                return (msg.get("content") or "").strip()
+
+            # 执行模型要求的所有工具调用
+            for tc in msg["tool_calls"]:
+                name = tc["function"]["name"]
+                try:
+                    args = json.loads(tc["function"].get("arguments") or "{}")
+                except (json.JSONDecodeError, TypeError):
+                    args = {}  # 参数解析失败，交给工具缺参提示
+                try:
+                    result_payload = executor(name, args)
+                except Exception as e:
+                    result_payload = {"ok": False, "error": f"executor 异常: {e}"}
+                tool_content = json.dumps(result_payload, ensure_ascii=False)[:2000]
+                history.append({
+                    "role": "tool",
+                    "tool_call_id": tc.get("id", ""),
+                    "content": tool_content,
+                })
+
+        raise RuntimeError(f"工具调用超过 {max_tool_calls} 轮上限，已停止")
+
     def _chat_openai(self, prompt: str) -> dict:
         import requests
 
