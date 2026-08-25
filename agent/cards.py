@@ -94,7 +94,7 @@ def analysis_card(summary: str, insights: list[str]):
     return card
 
 
-def stats_card(total: int, interview: int, pending: int, followed: int, lost: int):
+def stats_card(total: int, to_apply: int, interview: int, pending: int, followed: int, lost: int):
     """投递数据统计卡片"""
     interview_rate = round(interview / total * 100, 1) if total else 0
     pending_rate = round(pending / total * 100, 1) if total else 0
@@ -111,18 +111,25 @@ def stats_card(total: int, interview: int, pending: int, followed: int, lost: in
                 "tag": "div",
                 "fields": [
                     {"is_short": True, "text": {"tag": "lark_md", "content": f"**总投递数**\n{total}"}},
-                    {"is_short": True, "text": {"tag": "lark_md", "content": f"**面试**\n{interview} ({interview_rate}%)"}},
+                    {"is_short": True, "text": {"tag": "lark_md", "content": f"**待投递**\n{to_apply}"}},
                 ],
             },
             {
                 "tag": "div",
                 "fields": [
+                    {"is_short": True, "text": {"tag": "lark_md", "content": f"**面试**\n{interview} ({interview_rate}%)"}},
                     {"is_short": True, "text": {"tag": "lark_md", "content": f"**待跟进**\n{pending} ({pending_rate}%)"}},
+                ],
+            },
+            {
+                "tag": "div",
+                "fields": [
                     {"is_short": True, "text": {"tag": "lark_md", "content": f"**已失效**\n{lost} ({lost_rate}%)"}},
+                    {"is_short": True, "text": {"tag": "lark_md", "content": f"**已跟进**\n{followed}"}},
                 ],
             },
             {"tag": "hr"},
-            {"tag": "div", "text": {"tag": "lark_md", "content": f"已跟进：{followed} | 转化率：{interview_rate}%"}},
+            {"tag": "div", "text": {"tag": "lark_md", "content": f"转化率：{interview_rate}%"}},
         ],
     }
     return card

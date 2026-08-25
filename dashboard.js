@@ -61,6 +61,7 @@ function fieldValue(rec, name) {
 function aggregate(records) {
   var total = records.length;
   var interview = 0;
+  var toApply = 0;
   var resumeSent = 0;
   var pending = 0;
   var followed = 0;
@@ -75,6 +76,7 @@ function aggregate(records) {
     var company = fieldValue(rec, "公司") || "未知";
 
     if (status === "面试") interview++;
+    if (status === "待投递") toApply++;
     if (status === "简历") resumeSent++;
     if (remind === "待跟进") pending++;
     if (remind === "已跟进") followed++;
@@ -114,6 +116,7 @@ function aggregate(records) {
 
   return {
     total: total,
+    toApply: toApply,
     interview: interview,
     resumeSent: resumeSent,
     pending: pending,
@@ -132,11 +135,11 @@ function renderCharts(data) {
   new Chart(funnelCtx, {
     type: "bar",
     data: {
-      labels: ["总投递", "简历筛选", "进入面试"],
+      labels: ["总投递", "待投递", "简历筛选", "进入面试"],
       datasets: [{
         label: "数量",
-        data: [data.total, data.resumeSent, data.interview],
-        backgroundColor: ["#3370ff", "#8eb5ff", "#0d7a3e"],
+        data: [data.total, data.toApply, data.resumeSent, data.interview],
+        backgroundColor: ["#3370ff", "#8e53d1", "#0d7a3e", "#d46b08"],
         borderRadius: 4,
       }],
     },
@@ -229,6 +232,7 @@ async function main() {
 
     // Update stats
     document.getElementById("statTotal").textContent = data.total;
+    document.getElementById("statToApply").textContent = data.toApply;
     document.getElementById("statInterview").textContent = data.interview;
     document.getElementById("statPending").textContent = data.pending;
     document.getElementById("statLost").textContent = data.lost;

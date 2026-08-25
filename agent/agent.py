@@ -89,11 +89,14 @@ def run_follow_up():
             return
         print(f"  ✅ 共 {len(records)} 条记录")
 
-        # 2. 筛选需要提醒的记录
+        # 2. 筛选需要提醒的记录（排除"待投递"状态）
         pending = []
         for rec in records:
-            status = client.field_value(rec, "提醒状态")
-            if status not in ("", "待跟进"):
+            status = client.field_value(rec, "结果")
+            if status == "待投递":
+                continue
+            remind_status = client.field_value(rec, "提醒状态")
+            if remind_status not in ("", "待跟进"):
                 continue
             days = get_days_since(rec, client)
             threshold_days = FOLLOW_UP_HOURS / 24
@@ -170,7 +173,7 @@ def run_analysis():
         print(f"  ❌ {e}")
         return
 
-    # 提取各投递的 JD，用于分析
+    # 提取各投递的 JD，用于分析（排除"待投递"状态）
     jd_entries = []
     for rec in records:
         company = client.field_value(rec, "公司")
@@ -178,6 +181,8 @@ def run_analysis():
         jd_text = client.field_value(rec, "岗位JD")
         status = client.field_value(rec, "结果")
         remind = client.field_value(rec, "提醒状态")
+        if status == "待投递":
+            continue
         if jd_text and len(jd_text) > 20:
             jd_entries.append({
                 "company": company,
@@ -262,6 +267,7 @@ def run_statistics():
         return
 
     # Count by status
+    to_apply = 0
     interview = 0
     pending = 0
     followed = 0
@@ -270,6 +276,8 @@ def run_statistics():
     for rec in records:
         status = client.field_value(rec, "结果")
         remind = client.field_value(rec, "提醒状态")
+        if status == "待投递":
+            to_apply += 1
         if status == "面试":
             interview += 1
         if remind == "待跟进":
@@ -279,9 +287,9 @@ def run_statistics():
         if remind in ("已失效", "被拒/无反馈"):
             lost += 1
 
-    print(f"  📊 投递 {total} | 面试 {interview} | 待跟进 {pending} | 已跟进 {followed} | 已失效 {lost}")
+    print(f"  📊 投递 {total} | 待投递 {to_apply} | 面试 {interview} | 待跟进 {pending} | 已跟进 {followed} | 已失效 {lost}")
 
-    card = stats_card(total, interview, pending, followed, lost)
+    card = stats_card(total, to_apply, interview, pending, followed, lost)
 
     if FEISHU_RECEIVER_ID:
         ok = client.send_card(FEISHU_RECEIVER_ID, card, FEISHU_RECEIVER_TYPE)
@@ -296,7 +304,7 @@ def run_statistics():
         else:
             print("  ❌ 统计卡片发送失败")
     else:
-        print(f"\n📈 统计预览：投递 {total} | 面试 {interview} ({interview / total * 100:.1f}%) | 待跟进 {pending} | 已失效 {lost}")
+        print(f"\n📈 统计预览：投递 {total} | 待投递 {to_apply} | 面试 {interview} ({interview / total * 100:.1f}%) | 待跟进 {pending} | 已失效 {lost}")
 
 
 def run_interview_reminder():

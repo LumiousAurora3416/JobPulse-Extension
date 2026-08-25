@@ -47,7 +47,7 @@
     .container { max-width: 960px; margin: 0 auto; padding: 24px; }
     .stats-row {
       display: grid;
-      grid-template-columns: repeat(4, 1fr);
+      grid-template-columns: repeat(5, 1fr);
       gap: 16px;
       margin-bottom: 24px;
     }
@@ -62,6 +62,7 @@
     .stat-card .num { font-size: 32px; font-weight: 700; line-height: 1.2; }
     .stat-card .label { font-size: 12px; color: var(--text-secondary); margin-top: 4px; }
     .stat-card.total .num { color: var(--blue); }
+    .stat-card.toapply .num { color: #8e53d1; }
     .stat-card.interview .num { color: var(--green); }
     .stat-card.pending .num { color: var(--orange); }
     .stat-card.lost .num { color: var(--red); }
@@ -128,6 +129,10 @@
         <div class="stat-card total">
           <div class="num" id="statTotal">0</div>
           <div class="label">总投递数</div>
+        </div>
+        <div class="stat-card toapply">
+          <div class="num" id="statToApply">0</div>
+          <div class="label">待投递</div>
         </div>
         <div class="stat-card interview">
           <div class="num" id="statInterview">0</div>
