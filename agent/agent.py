@@ -367,14 +367,39 @@ def run_interview_reminder():
     print(f"  ✅ 已发送 {len(upcoming)} 条面试提醒")
 
 
+def run_match(jd_path: str, resume_path: str):
+    """--match：岗位匹配度评分（JD + 简历 → 评分报告，见 docs/match-schema.md）"""
+    if not LLM_API_KEY:
+        print("  ❌ 未配置 LLM_API_KEY，无法评分")
+        return
+    if not jd_path or not resume_path:
+        print("  ⚠️ 请提供 --jd <JD文件> --resume <简历文件>")
+        return
+    try:
+        jd_text = open(jd_path, encoding="utf-8").read()
+        resume_text = open(resume_path, encoding="utf-8").read()
+    except OSError as e:
+        print(f"  ❌ 读取文件失败: {e}")
+        return
+
+    from match_engine import evaluate
+    report = evaluate(jd_text, resume_text)
+    print(json.dumps(report, ensure_ascii=False, indent=2))
+
+
 def main():
     parser = argparse.ArgumentParser(description="JobPulse Agent")
     parser.add_argument("--full", action="store_true", help="执行追踪 + 分析")
     parser.add_argument("--analyze", action="store_true", help="仅执行归因分析")
     parser.add_argument("--stats", action="store_true", help="仅执行数据统计")
+    parser.add_argument("--match", action="store_true", help="岗位匹配度评分（配 --jd --resume）")
+    parser.add_argument("--jd", help="岗位 JD 文本文件路径")
+    parser.add_argument("--resume", help="简历文本文件路径")
     args = parser.parse_args()
 
-    if args.stats:
+    if args.match:
+        run_match(args.jd, args.resume)
+    elif args.stats:
         run_statistics()
     elif args.analyze:
         run_analysis()

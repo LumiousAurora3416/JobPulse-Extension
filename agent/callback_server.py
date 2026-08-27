@@ -28,11 +28,15 @@ app = Flask(__name__)
 
 
 def json_resp(data: dict, status=200):
-    """手动构建 JSON 响应"""
+    """手动构建 JSON 响应（含 CORS 头，供插件 / 网页跨域调用）"""
     body = json.dumps(data, ensure_ascii=False)
     resp = Response(body, status=status)
     resp.headers["Content-Type"] = "application/json; charset=utf-8"
     resp.headers["Content-Length"] = str(len(body.encode("utf-8")))
+    # V1：允许所有来源跨域（插件 chrome-extension:// 与本地调试），生产可收紧为白名单
+    resp.headers["Access-Control-Allow-Origin"] = "*"
+    resp.headers["Access-Control-Allow-Methods"] = "POST, GET, OPTIONS"
+    resp.headers["Access-Control-Allow-Headers"] = "Content-Type"
     return resp
 
 
@@ -58,6 +62,28 @@ def callback():
 @app.route("/health")
 def health():
     return json_resp({"status": "ok"})
+
+
+@app.route("/api/match", methods=["POST", "OPTIONS"])
+def api_match():
+    """岗位匹配度评分接口（V1：resume_text 直传；resume_version_id 简历库后置到插件阶段）"""
+    if request.method == "OPTIONS":
+        return json_resp({})  # CORS 预检
+    payload = request.get_json(force=True, silent=True) or {}
+    jd_text = (payload.get("jd_text") or "").strip()
+    resume_text = (payload.get("resume_text") or "").strip()
+    if not jd_text or not resume_text:
+        return json_resp({"code": 400, "msg": "jd_text 与 resume_text 必填"}, 400)
+
+    try:
+        from match_engine import evaluate
+        report = evaluate(jd_text, resume_text)
+        return json_resp({"code": 0, "data": report})
+    except Exception as e:
+        print(f"  ❌ /api/match 出错: {e}")
+        import traceback
+        traceback.print_exc()
+        return json_resp({"code": 500, "msg": f"评分失败: {e}"}, 500)
 
 
 @app.route("/")
