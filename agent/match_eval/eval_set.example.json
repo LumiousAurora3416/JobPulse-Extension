@@ -1,0 +1,21 @@
+{
+  "cases": [
+    {
+      "id": "case_01",
+      "resume_excerpt": "教育背景：某大学 软件工程 本科（2024.09 - 2027.06）\n技能：Vue3、TypeScript、小程序、Node.js、Vite、Webpack、Git、Less\n实习经历：XX电商公司 前端开发实习生（2026.06 - 2026.09）\n· 负责商城 H5 与小程序端核心页面开发，基于 Vue3 + TypeScript 完成购物车、订单模块\n· 通过路由懒加载、图片 CDN 与缓存策略优化首屏加载，首屏时间从 3.0s 优化至 1.2s\n· 封装基础组件库（20+ 通用组件），接入微服务网关统一鉴权\n项目经历：校园二手交易小程序（2025.10 - 2026.03）\n· 独立完成小程序前端，使用小程序原生框架 + Node.js 搭建接口层",
+      "jd_text": "【电商前端工程师】\n岗位职责：\n1. 负责电商平台 H5 / 小程序端核心页面开发与维护\n2. 参与前端工程化建设，优化构建链路与首屏性能\n3. 封装并维护前端组件库，提升团队研发效率\n任职要求：\n1. 本科及以上学历，计算机相关专业\n2. 精通 Vue3 / TypeScript，有小程序开发经验\n3. 熟悉前端性能优化（首屏加载、懒加载、缓存策略）\n4. 了解 Node.js，具备前后端协作经验优先\n加分项：有微服务架构实践经验、参与过开源项目",
+      "human": {
+        "overall_score": 80,
+        "verdict": "可投",
+        "hard_gate_met": true,
+        "jd_requirements": [
+          {"requirement": "精通 Vue3 / TypeScript", "matched": true},
+          {"requirement": "有小程序开发经验", "matched": true},
+          {"requirement": "参与前端工程化建设，优化构建链路与首屏性能", "matched": false},
+          {"requirement": "参与过开源项目", "matched": false}
+        ],
+        "notes": "技能全命中，经历高度相关；唯一缺口是工程化建设与开源项目。参考标注示例。"
+      }
+    }
+  ]
+}
