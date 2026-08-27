@@ -50,3 +50,9 @@ ENABLE_ANALYSIS = True
 
 # 归因分析执行间隔（单位：天；0 = 每次运行都执行）
 ANALYSIS_INTERVAL_DAYS = 7
+
+# ========== 岗位匹配度（--match） ==========
+MATCH_THRESHOLD = int(env("MATCH_THRESHOLD", "70"))          # 匹配度 ≥ 此值判「可投」
+MATCH_WEIGHTS = {"硬性门槛": 0.2, "技能匹配": 0.4, "经历相关性": 0.4}  # 维度权重（契约 §7.2）
+MATCH_MAX_JD_CHARS = int(env("MATCH_MAX_JD_CHARS", "2000"))         # JD 截断长度
+MATCH_MAX_RESUME_CHARS = int(env("MATCH_MAX_RESUME_CHARS", "4000")) # 简历截断长度
