@@ -1,5 +1,39 @@
 # Changelog
 
+## v1.6.0 (2026-08-27)
+
+### 新增 — 岗位匹配度模块（第一阶段：引擎 + 接口 + 评测框架）
+
+- **匹配度引擎** `agent/match_engine.py`：JD + 简历 → 结构化评分报告。分维度加权（硬性门槛20% / 技能匹配40% / 经历相关性40%）+ JD 要求命中表（逐条证据 + source 三分类）+ 硬性门槛布尔判定 + 逐段诊断
+- **算法预核对层**：jieba 中文分词 + 招聘停用词 + 整词边界正则 → 关键词命中信号（`keyword_hit_rate` / `discrepancy`），喂给 LLM 作客观锚点防分数虚高（发散调整）
+- **verdict 后处理强一致**：硬性门槛不满足 → 「不建议投」（降权提示，总分不压低）；分数档位映射（≥70 可投 / 55-70 建议优化 / <55 不建议投）
+- **POST /api/match 接口**：jd_text + resume_text 直传，返回评分报告；json_resp 统一加 CORS 头 + OPTIONS 预检
+- **`--match` CLI**：`python agent.py --match --jd <文件> --resume <文件>`
+- **评测框架** `agent/match_eval/run_eval.py`：分层指标（总分 MAE / verdict 一致率 / 硬性门槛一致率 / 命中表 P/R）+ `--make-template` 生成待标注模板 + 结果缓存 + `--keyword-only` 秒级模式
+
+### 文档
+- `docs/match-schema.md`：匹配度引擎**契约**（评分报告 Schema / prompt 全文 / 权重锚点 / 算法核对层公式 / 评测规范）—— 双端实现唯一事实来源
+- `docs/TECH-MATCH.md` 升级 v0.2：三项目**代码级实测**调研结论（§2.1）+ 融合分层架构（§3）+ 设计决策记录 D1-D5（§3.5）+ 风险补充（§9）
+- `docs/PRD-MATCH.md`：岗位匹配度产品需求文档（v0.1，评审通过）
+
+### 变更
+- `config.py` 新增 `MATCH_THRESHOLD` / `MATCH_WEIGHTS` / `MATCH_MAX_JD_CHARS` / `MATCH_MAX_RESUME_CHARS`
+- `requirements.txt` 新增 `jieba>=0.42.0`
+- `.gitignore` 新增 `.codex/`（Codex CLI 配置含 Render token）、`agent/match_eval/` 的标注集/缓存/模板（含简历摘录，隐私）
+
+### ⏳ 进行中 / 待做
+- 标注集建立 + 人工标注（10 条真实 JD 已拉取入 eval_set.json，待用户标注）
+- 插件 V1 入口（选简历版本 → 算分 → 高分直接投递）
+- 简历库表（飞书新建「简历库」表）与 resume_version_id 支持
+
+### 技术栈
+| 层 | 技术 |
+|---|---|
+| 匹配度引擎 | jieba 分词 + DeepSeek（temperature 0.1 / json_object 降级重试） |
+| 评测 | 结构化标注集 + 分层指标（MAE / 一致率 / P-R） |
+
+---
+
 ## v1.5.0 (2026-08-22)
 
 ### 新增

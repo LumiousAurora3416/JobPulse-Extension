@@ -21,8 +21,12 @@ JobPulse_Extension/
 │   ├── config.py          # 配置（支持环境变量覆盖）
 │   ├── llm_client.py      # LLM 客户端（OpenAI / Claude）
 │   ├── callback_server.py # 卡片按钮回调服务（Flask）
+│   ├── match_engine.py    # 岗位匹配度引擎（v1.6.0，JD+简历→评分报告）
+│   ├── match_eval/        # 匹配度评测（标注集 eval_set + run_eval.py）
 │   ├── get_openid.py      # 获取飞书 open_id 工具
 │   └── requirements.txt   # Python 依赖
+│
+├── docs/                  # 岗位匹配度文档（PRD-MATCH / TECH-MATCH / match-schema）
 │
 └── .github/workflows/
     └── agent.yml          # GitHub Actions 定时任务（每日 9:00）
@@ -178,7 +182,9 @@ python agent.py --full         # 同时执行追踪 + 分析
 - [x] **「待投递」状态支持**：插件/看板/Agent 全链路支持"想投暂未投"的岗位记录
 - [x] **对话引擎 Agent 化**：DeepSeek function calling + 多轮记忆，LLM 自主调工具、自然语言回复（v1.5.0）
 - [ ] **面试题预测**：LLM 读 JD 生成高频面试题，面试前推送
-- [ ] **岗位匹配度评分** `--match`：LLM 对比简历文本与 JD，输出匹配度分数和改进建议
+- [x] **岗位匹配度评分（第一阶段完成 v1.6.0）** `--match`：引擎 + /api/match + CLI + 评测框架
+  - [ ] 标注集建立 + 人工标注（10 条真实 JD 已拉取，方法论暂停待续）
+  - [ ] 插件 V1 入口 + 简历库表
 - [ ] **拒信归因**：`rejection_insight_card` 卡片模板已就绪，需接入 Agent 自动识别被拒记录并做 LLM 归因
 
 ---
@@ -220,6 +226,13 @@ PROJECT_REVIEW.md 本质是**你的面试作品集级复盘文档**，受众是�
 - 卡片交互按钮需要部署回调服务接收飞书 card action webhook（Render / ngrok）
 - 飞书事件订阅的 chat_type 字段 v2 版变为 "p2p" 而非旧版 "private"，必须兼容两种
 - 多维表格字段名必须与 API 代码中的 key **一字不差**，否则 API 静默失败或写入错误列
+
+### 匹配度引擎 & 评测
+- 匹配度是主观判断，评测真值是用户标注（一致性评测），不是客观对错；标注者对自己判断的自信度是关键卡点
+- 评测 P/R 必须对齐粒度：`--make-template` 以 AI 命中表为基准生成标注模板；人工另拆粒度会导致指标失真
+- 评测缓存只存 AI 报告，`human` 实时读标注集（缓存复用旧标注会让指标不更新）
+- 借鉴开源方案必须读源码：ResumeIQ 宣称"15 组标注 MAE 5.0"但仓库实际只有 3 组；@resurank 英文 tokenizer 对中文直接报废
+- 算法核对层只证伪"分数虚高"：词面不重叠但语义很配是盲区，靠 LLM 语义兜底
 
 ### Git & 安全
 - **git filter-branch --tree-filter 会丢失 untracked 文件**：运行前确认所有 untracked 文件已备份或提交。PROJECT_REVIEW.md 就是实际教训
