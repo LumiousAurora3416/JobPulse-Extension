@@ -37,8 +37,12 @@ agent/resume.txt
 # R
 .Rhistory
 
-# 个人复盘文档（仅供本地面试准备，不上传 GitHub）
-PROJECT_REVIEW.md
+# 本地素材库（面试素材 / 思考过程 / 复盘，绝不上传 GitHub）
+# 所有不想外泄的文件统一放 private/ 目录，一行挡住整个文件夹
+private/
+
+# 简历（Word 版，与 resume.txt 一样是本地素材，不上传）
+agent/resume.docx
 
 # 岗位匹配度评测（标注集含简历摘录，隐私；缓存/模板为生成产物）
 agent/match_eval/eval_set.json
