@@ -3,6 +3,12 @@
  * 优先从 chrome.storage.local 读取（用户在 setup.html 中填入）
  */
 let FEISHU = null;
+// ---- 岗位匹配度 V1 ----
+const MATCH_DEFAULT_BASE = "https://jobpulse-extension.onrender.com";
+const JD_SEND_MAX = 2000; // 对齐引擎 MATCH_MAX_JD_CHARS
+const RESUME_SEND_MAX = 4000; // 对齐引擎 MATCH_MAX_RESUME_CHARS
+let RESUME_TABLE_ID_CACHE = null; // 自动查找到的简历库 table_id 缓存
+let currentMatch = null; // 最近一次匹配报告（供直投时写入「匹配分」）
 const TOKEN_URL =
   "https://open.feishu.cn/open-apis/auth/v3/tenant_access_token/internal";
 
@@ -674,6 +680,293 @@ function setLoading(loading) {
   btn.textContent = loading ? "提交中…" : "写入飞书";
 }
 
+/* ================= 岗位匹配度 V1：选简历版本 → 算分 → 高分直投 ================= */
+
+function resumeTablesUrl() {
+  return `https://open.feishu.cn/open-apis/bitable/v1/apps/${FEISHU.appToken}/tables`;
+}
+function resumeRecordsUrl(tableId) {
+  return `https://open.feishu.cn/open-apis/bitable/v1/apps/${FEISHU.appToken}/tables/${tableId}/records`;
+}
+
+// Normalize a field value (multi-line text / single-select / url) to plain text.
+function fieldText(value) {
+  if (value == null) return "";
+  if (typeof value === "string") return value;
+  if (Array.isArray(value)) {
+    return value.map((o) => (o && o.text != null ? o.text : "")).join("、");
+  }
+  if (typeof value === "object") {
+    if (value.text != null) return String(value.text);
+    if (value.link != null) return String(value.link);
+    return JSON.stringify(value);
+  }
+  return String(value);
+}
+
+function escapeHtml(s) {
+  return String(s == null ? "" : s)
+    .replace(/&/g, "&amp;")
+    .replace(/</g, "&lt;")
+    .replace(/>/g, "&gt;")
+    .replace(/"/g, "&quot;");
+}
+
+// Resolve resume-library table id: configured value wins, else auto-find by name.
+async function resolveResumeTableId(token) {
+  if (FEISHU.resumeTableId) return FEISHU.resumeTableId;
+  if (RESUME_TABLE_ID_CACHE) return RESUME_TABLE_ID_CACHE;
+  const res = await fetch(resumeTablesUrl() + "?page_size=100", {
+    headers: { Authorization: `Bearer ${token}` },
+  });
+  const data = await readFeishuJson(res, "查找简历库表");
+  if (data.code !== 0) {
+    throw new Error(`[${data.code}] ${data.msg || "查找简历库表失败"}`);
+  }
+  const items = (data.data && data.data.items) || [];
+  const hit = items.find((t) => t.name === "简历库");
+  if (!hit) {
+    throw new Error(
+      "未找到「简历库」表：请在 agent/ 目录运行 python init_match_tables.py 建表，或在设置页填写简历库 Table ID。"
+    );
+  }
+  RESUME_TABLE_ID_CACHE = hit.table_id;
+  return hit.table_id;
+}
+
+// Fill the #resumeVersion <select> with rows from the resume library.
+async function loadResumeVersions() {
+  const sel = document.getElementById("resumeVersion");
+  if (!sel) return;
+  try {
+    const token = await getTenantAccessToken();
+    const tableId = await resolveResumeTableId(token);
+    const res = await fetch(
+      resumeRecordsUrl(tableId) + "?page_size=100&text_field_as_array=false",
+      { headers: { Authorization: `Bearer ${token}` } }
+    );
+    const data = await readFeishuJson(res, "读取简历库");
+    if (data.code !== 0) {
+      throw new Error(`[${data.code}] ${data.msg || "读取简历库失败"}`);
+    }
+    const items = (data.data && data.data.items) || [];
+    sel.innerHTML = "";
+    if (!items.length) {
+      const o = document.createElement("option");
+      o.value = "";
+      o.textContent = "— 简历库为空，请先运行初始化脚本 —";
+      sel.appendChild(o);
+      return;
+    }
+    items.forEach((it) => {
+      const fields = it.fields || {};
+      const name = fieldText(fields["简历名称"]) || "未命名简历";
+      const dir = fieldText(fields["适用方向"]);
+      const o = document.createElement("option");
+      o.value = it.record_id;
+      o.textContent = dir ? `${name} · ${dir}` : name;
+      sel.appendChild(o);
+    });
+  } catch (e) {
+    const o = document.createElement("option");
+    o.value = "";
+    o.textContent = "— 简历库加载失败 —";
+    sel.innerHTML = "";
+    sel.appendChild(o);
+    showMessage("简历版本加载失败：" + (e.message || String(e)), false);
+  }
+}
+
+// Fetch the resume body text of a chosen record.
+async function getResumeBody(token, recordId) {
+  const tableId = await resolveResumeTableId(token);
+  const res = await fetch(resumeRecordsUrl(tableId) + "/" + recordId, {
+    headers: { Authorization: `Bearer ${token}` },
+  });
+  const data = await readFeishuJson(res, "读取简历正文");
+  if (data.code !== 0) {
+    throw new Error(`[${data.code}] ${data.msg || "读取简历正文失败"}`);
+  }
+  const rec = data.data && data.data.record;
+  const body = fieldText(rec && rec.fields && rec.fields["简历正文"]).trim();
+  if (!body) throw new Error("所选版本的「简历正文」为空，请在飞书简历库补全。");
+  return body;
+}
+
+// Call backend /api/match with jd + resume text. 30s timeout (> engine 15s budget).
+async function callMatchApi(jdText, resumeText) {
+  const base = (FEISHU.matchBaseUrl || MATCH_DEFAULT_BASE).replace(/\/+$/, "");
+  const ctrl = new AbortController();
+  const timer = setTimeout(() => ctrl.abort(), 30000);
+  const headers = { "Content-Type": "application/json" };
+  if (FEISHU.matchToken) headers["X-Match-Token"] = FEISHU.matchToken;
+  let res;
+  try {
+    res = await fetch(base + "/api/match", {
+      method: "POST",
+      headers,
+      body: JSON.stringify({
+        jd_text: jdText.slice(0, JD_SEND_MAX),
+        resume_text: resumeText.slice(0, RESUME_SEND_MAX),
+      }),
+      signal: ctrl.signal,
+    });
+  } catch (e) {
+    clearTimeout(timer);
+    if (e && e.name === "AbortError") {
+      throw new Error("匹配超时（>30s），请稍后重试");
+    }
+    throw new Error(
+      "无法连接匹配后端：请检查网络、后端是否在线，以及扩展已重新加载且 manifest 包含该域名 host 权限。"
+    );
+  } finally {
+    clearTimeout(timer);
+  }
+  const text = await res.text();
+  let data;
+  try {
+    data = JSON.parse(text);
+  } catch (_) {
+    throw new Error(`匹配后端响应异常 HTTP ${res.status}`);
+  }
+  if (res.status === 401) {
+    throw new Error(
+      "后端鉴权失败：请核对设置页「匹配 Token」与后端 MATCH_API_TOKEN 一致"
+    );
+  }
+  if (!data || data.code !== 0) {
+    throw new Error((data && data.msg) || `匹配失败 HTTP ${res.status}`);
+  }
+  return data.data; // score report dict
+}
+
+// Derive verdict class from report; tolerant to backend contract drift.
+// bad(不建议投) wins if hard gate unmet even when score is high.
+function verdictClass(report) {
+  if (report.hard_gate && report.hard_gate.met === false) return "bad";
+  const s = report.overall_score;
+  if (s >= 70 || report.verdict === "可投") return "ok";
+  if (s >= 55) return "warn";
+  return "bad";
+}
+
+const VERDICT_LABEL = { ok: "可投", warn: "建议优化", bad: "不建议投" };
+
+function resetSubmitLabel() {
+  const btn = document.getElementById("submitBtn");
+  if (btn) btn.textContent = "写入飞书";
+}
+
+function setMatchLoading(loading) {
+  const btn = document.getElementById("matchBtn");
+  btn.disabled = loading;
+  btn.textContent = loading ? "计算中…" : "🧮 算匹配度";
+}
+
+// Change submit label so the primary action reads as "high score → direct apply".
+function applyVerdictToSubmit(report) {
+  const btn = document.getElementById("submitBtn");
+  const score = report.overall_score;
+  btn.textContent =
+    verdictClass(report) === "ok"
+      ? `✓ 一键投递 · ${score}分`
+      : `仍写入飞书 · ${score}分`;
+}
+
+// Render a compact score summary into #matchResult.
+function renderMatchReport(report) {
+  const box = document.getElementById("matchResult");
+  const cls = verdictClass(report);
+  let html = `<div class="score-head"><span class="score-num">${report.overall_score}</span><span class="verdict-pill ${cls}">${VERDICT_LABEL[cls]}</span></div>`;
+  if (
+    report.hard_gate &&
+    report.hard_gate.met === false &&
+    report.hard_gate.reasons &&
+    report.hard_gate.reasons.length
+  ) {
+    html += `<div class="hard-gate-warn">⚠ 硬门槛未满足：${escapeHtml(
+      report.hard_gate.reasons[0]
+    )}</div>`;
+  }
+  if (Array.isArray(report.dimensions)) {
+    html += report.dimensions
+      .map((d) => {
+        const pct = Math.max(0, Math.min(100, Math.round(d.score || 0)));
+        return `<div class="dim-row"><span class="dim-name">${escapeHtml(
+          d.name
+        )}</span><div class="dim-bar"><div class="dim-fill" style="width:${pct}%"></div></div><span class="dim-score">${pct}</span></div>`;
+      })
+      .join("");
+  }
+  const unmet = Array.isArray(report.jd_requirements)
+    ? report.jd_requirements.filter((r) => !r.matched).slice(0, 3)
+    : [];
+  if (unmet.length) {
+    html += `<div class="gap-list">`;
+    html += unmet
+      .map((g) => {
+        const missing = g.source === "missing";
+        return `<div class="gap-item"><span class="gap-tag ${
+          missing ? "missing" : "addable"
+        }">${missing ? "真缺" : "可补"}</span><span class="gap-text">缺「${escapeHtml(
+          g.requirement
+        )}」</span></div>`;
+      })
+      .join("");
+    html += `</div>`;
+  } else {
+    html += `<div class="match-all-hit">JD 要求全部命中 ✅</div>`;
+  }
+  if (
+    report.algorithm_check &&
+    report.algorithm_check.keyword_hit_rate != null
+  ) {
+    html += `<div class="match-meta">关键词命中率 ${Math.round(
+      report.algorithm_check.keyword_hit_rate * 100
+    )}%</div>`;
+  }
+  box.innerHTML = html;
+  box.hidden = false;
+  currentMatch = report;
+  applyVerdictToSubmit(report);
+}
+
+async function runMatch() {
+  hideMessage();
+  const box = document.getElementById("matchResult");
+  const jd = document.getElementById("jobDesc").value.trim();
+  if (jd.length < 30) {
+    box.hidden = false;
+    box.innerHTML =
+      '<div class="match-error">岗位 JD 为空或过短（需 ≥30 字）：请进入职位详情页让插件抓取，或手动粘贴后重试。</div>';
+    return;
+  }
+  const recordId = document.getElementById("resumeVersion").value;
+  if (!recordId) {
+    box.hidden = false;
+    box.innerHTML =
+      '<div class="match-error">请先在上方选择简历版本（列表为空请先运行 agent/init_match_tables.py）。</div>';
+    return;
+  }
+  setMatchLoading(true);
+  box.hidden = false;
+  box.innerHTML =
+    "<div class=\"match-error\">🧮 匹配度计算中…约 10-15s，请勿关闭弹窗</div>";
+  try {
+    const token = await getTenantAccessToken();
+    const resumeBody = await getResumeBody(token, recordId);
+    const report = await callMatchApi(jd, resumeBody);
+    renderMatchReport(report);
+  } catch (e) {
+    box.innerHTML =
+      '<div class="match-error">匹配失败：' +
+      escapeHtml(e.message || String(e)) +
+      "</div>";
+  } finally {
+    setMatchLoading(false);
+  }
+}
+
 /**
  * Load Feishu config from chrome.storage.local.
  * If not configured, show a prompt to open setup page.
@@ -683,7 +976,15 @@ function loadConfig() {
     chrome.storage.local.get(["feishuConfig"], function (result) {
       var cfg = result.feishuConfig;
       if (cfg && cfg.appId && cfg.appSecret && cfg.appToken && cfg.tableId) {
-        FEISHU = cfg;
+        // Fill optional match keys with defaults so old saved configs still work.
+        FEISHU = Object.assign(
+          {
+            resumeTableId: "",
+            matchBaseUrl: MATCH_DEFAULT_BASE,
+            matchToken: "",
+          },
+          cfg
+        );
         resolve(true);
       } else {
         FEISHU = null;
@@ -717,6 +1018,17 @@ document.addEventListener("DOMContentLoaded", async function () {
   });
 
   fillFromPage();
+  loadResumeVersions();
+
+  document.getElementById("matchBtn").addEventListener("click", runMatch);
+  document.getElementById("resumeVersion").addEventListener("change", function () {
+    currentMatch = null; // resume changed -> stale match must not attach to submit
+    resetSubmitLabel();
+  });
+  document.getElementById("jobDesc").addEventListener("input", function () {
+    currentMatch = null; // JD edited -> stale match must not attach to submit
+    resetSubmitLabel();
+  });
 
   document.getElementById("submitBtn").addEventListener("click", async function () {
     hideMessage();
@@ -753,6 +1065,10 @@ document.addEventListener("DOMContentLoaded", async function () {
       结果: result,
     };
     if (salary) fields["薪资"] = salary;
+    // Attach the latest match score (V1 匹配度：高分直投）when a fresh report exists.
+    if (currentMatch && currentMatch.overall_score != null) {
+      fields["匹配分"] = currentMatch.overall_score; // numeric field expects a number
+    }
 
     setLoading(true);
     try {

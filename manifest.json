@@ -8,5 +8,10 @@
     "default_title": "同步到飞书"
   },
   "permissions": ["tabs", "activeTab", "scripting", "storage"],
-  "host_permissions": ["https://open.feishu.cn/*"]
+  "host_permissions": [
+    "https://open.feishu.cn/*",
+    "https://jobpulse-extension.onrender.com/*",
+    "http://127.0.0.1/*",
+    "http://localhost/*"
+  ]
 }

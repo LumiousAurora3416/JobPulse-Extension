@@ -172,6 +172,152 @@
       .quick-links .sep {
         color: var(--border);
       }
+      /* 岗位匹配度 V1 */
+      .actions button.ghost {
+        padding: 10px 16px;
+        border: 1px solid var(--byte-blue);
+        border-radius: 6px;
+        font-size: 14px;
+        font-weight: 500;
+        color: var(--byte-blue);
+        background: #fff;
+        cursor: pointer;
+        transition: background 0.15s ease;
+        white-space: nowrap;
+      }
+      .actions button.ghost:hover:not(:disabled) {
+        background: var(--byte-blue-light);
+      }
+      .actions button.ghost:disabled {
+        opacity: 0.65;
+        cursor: not-allowed;
+      }
+      .match-result {
+        margin-top: 12px;
+        padding: 12px;
+        border: 1px solid var(--border);
+        border-radius: 8px;
+        background: #fafbfc;
+        max-height: 320px;
+        overflow-y: auto;
+      }
+      .score-head {
+        display: flex;
+        align-items: center;
+        gap: 10px;
+        margin-bottom: 10px;
+      }
+      .score-num {
+        font-size: 28px;
+        font-weight: 700;
+        line-height: 1;
+        color: var(--text-primary);
+      }
+      .verdict-pill {
+        padding: 3px 10px;
+        border-radius: 999px;
+        font-size: 12px;
+        font-weight: 600;
+        border: 1px solid transparent;
+      }
+      .verdict-pill.ok {
+        background: #e8ffea;
+        color: #0d7a3e;
+        border-color: #b7eb8f;
+      }
+      .verdict-pill.warn {
+        background: #fff7e6;
+        color: #d46b08;
+        border-color: #ffd591;
+      }
+      .verdict-pill.bad {
+        background: #fff2f0;
+        color: var(--danger);
+        border-color: #ffccc7;
+      }
+      .hard-gate-warn {
+        margin-bottom: 8px;
+        padding: 6px 8px;
+        border-radius: 6px;
+        background: #fff2f0;
+        color: var(--danger);
+        font-size: 12px;
+        line-height: 1.4;
+      }
+      .dim-row {
+        display: flex;
+        align-items: center;
+        gap: 8px;
+        margin-bottom: 6px;
+        font-size: 12px;
+        color: var(--text-secondary);
+      }
+      .dim-row .dim-name {
+        width: 68px;
+        flex: none;
+      }
+      .dim-bar {
+        flex: 1;
+        height: 6px;
+        border-radius: 3px;
+        background: #eef1f6;
+        overflow: hidden;
+      }
+      .dim-bar .dim-fill {
+        height: 100%;
+        background: var(--byte-blue);
+        border-radius: 3px;
+      }
+      .dim-row .dim-score {
+        width: 26px;
+        text-align: right;
+        font-weight: 600;
+        color: var(--text-primary);
+      }
+      .gap-list {
+        margin-top: 4px;
+      }
+      .gap-item {
+        display: flex;
+        align-items: flex-start;
+        gap: 6px;
+        margin-top: 6px;
+        font-size: 12px;
+        line-height: 1.4;
+      }
+      .gap-tag {
+        flex: none;
+        padding: 0 6px;
+        border-radius: 4px;
+        font-size: 11px;
+        font-weight: 600;
+      }
+      .gap-tag.missing {
+        background: #fff2f0;
+        color: var(--danger);
+      }
+      .gap-tag.addable {
+        background: #fff7e6;
+        color: #d46b08;
+      }
+      .gap-item .gap-text {
+        color: var(--text-primary);
+      }
+      .match-all-hit {
+        margin-top: 4px;
+        font-size: 12px;
+        color: #0d7a3e;
+      }
+      .match-result .match-error {
+        color: var(--danger);
+        font-size: 12px;
+        line-height: 1.5;
+      }
+      .match-result .match-meta {
+        margin-top: 8px;
+        font-size: 11px;
+        color: var(--text-secondary);
+      }
     </style>
   </head>
   <body>
@@ -213,9 +359,17 @@
             <option value="简历" selected>简历</option>
           </select>
         </div>
+        <div class="field">
+          <label for="resumeVersion">简历版本</label>
+          <select id="resumeVersion">
+            <option value="">— 加载中… —</option>
+          </select>
+        </div>
         <div class="actions">
+          <button type="button" class="ghost" id="matchBtn">🧮 算匹配度</button>
           <button type="button" class="primary" id="submitBtn">写入飞书</button>
         </div>
+        <div id="matchResult" class="match-result" hidden></div>
         <div class="quick-links">
           <a id="feishuTableLink" href="#" target="_blank">📋 飞书表格</a>
           <span class="sep">|</span>

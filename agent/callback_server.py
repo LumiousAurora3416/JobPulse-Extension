@@ -36,7 +36,7 @@ def json_resp(data: dict, status=200):
     # V1：允许所有来源跨域（插件 chrome-extension:// 与本地调试），生产可收紧为白名单
     resp.headers["Access-Control-Allow-Origin"] = "*"
     resp.headers["Access-Control-Allow-Methods"] = "POST, GET, OPTIONS"
-    resp.headers["Access-Control-Allow-Headers"] = "Content-Type"
+    resp.headers["Access-Control-Allow-Headers"] = "Content-Type, X-Match-Token"
     return resp
 
 
@@ -69,6 +69,11 @@ def api_match():
     """岗位匹配度评分接口（V1：resume_text 直传；resume_version_id 简历库后置到插件阶段）"""
     if request.method == "OPTIONS":
         return json_resp({})  # CORS 预检
+    # Optional token gate: only enforced when MATCH_API_TOKEN env is set.
+    # Leave it unset locally / for CLI to keep the current open behavior.
+    expected_token = os.environ.get("MATCH_API_TOKEN", "")
+    if expected_token and request.headers.get("X-Match-Token", "") != expected_token:
+        return json_resp({"code": 401, "msg": "X-Match-Token 缺失或不匹配"}, 401)
     payload = request.get_json(force=True, silent=True) or {}
     jd_text = (payload.get("jd_text") or "").strip()
     resume_text = (payload.get("resume_text") or "").strip()

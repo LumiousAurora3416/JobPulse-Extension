@@ -134,6 +134,18 @@
         <label for="tableId">Table ID</label>
         <input type="text" id="tableId" placeholder="tblxxxxxxxxxxxxxxx" autocomplete="off" />
       </div>
+      <div class="field">
+        <label for="resumeTableId">简历库 Table ID（可选）</label>
+        <input type="text" id="resumeTableId" placeholder="留空则按表名「简历库」自动查找" autocomplete="off" />
+      </div>
+      <div class="field">
+        <label for="matchBaseUrl">匹配后端地址（可选）</label>
+        <input type="text" id="matchBaseUrl" placeholder="https://jobpulse-extension.onrender.com" autocomplete="off" />
+      </div>
+      <div class="field">
+        <label for="matchToken">匹配 Token（可选）</label>
+        <input type="password" id="matchToken" placeholder="对应后端 MATCH_API_TOKEN，未启用鉴权可留空" />
+      </div>
 
       <div class="actions">
         <button class="primary" id="saveBtn">保存配置</button>

@@ -11,6 +11,9 @@ document.addEventListener("DOMContentLoaded", () => {
       document.getElementById("appSecret").value = c.appSecret || "";
       document.getElementById("appToken").value = c.appToken || "";
       document.getElementById("tableId").value = c.tableId || "";
+      document.getElementById("resumeTableId").value = c.resumeTableId || "";
+      document.getElementById("matchBaseUrl").value = c.matchBaseUrl || "";
+      document.getElementById("matchToken").value = c.matchToken || "";
     }
   });
 
@@ -24,20 +27,28 @@ function showMessage(text, ok) {
 }
 
 function saveConfig() {
-  const config = {
+  // Only the 4 feishu credentials are required; the 3 match options are optional.
+  const required = {
     appId: document.getElementById("appId").value.trim(),
     appSecret: document.getElementById("appSecret").value.trim(),
     appToken: document.getElementById("appToken").value.trim(),
     tableId: document.getElementById("tableId").value.trim(),
   };
 
-  const missing = Object.entries(config)
+  const missing = Object.entries(required)
     .filter(([_, v]) => !v)
     .map(([k]) => k);
   if (missing.length) {
     showMessage("请填写完整：" + missing.join("、"), false);
     return;
   }
+
+  const config = {
+    ...required,
+    resumeTableId: document.getElementById("resumeTableId").value.trim(),
+    matchBaseUrl: document.getElementById("matchBaseUrl").value.trim(),
+    matchToken: document.getElementById("matchToken").value.trim(),
+  };
 
   chrome.storage.local.set({ feishuConfig: config }, () => {
     showMessage("✅ 配置已保存！可以关闭此页面，回到插件弹窗使用", true);
