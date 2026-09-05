@@ -793,11 +793,11 @@ async function getResumeBody(token, recordId) {
   return body;
 }
 
-// Call backend /api/match with jd + resume text. 30s timeout (> engine 15s budget).
+// Call backend /api/match with jd + resume text. 60s timeout to absorb Render cold start + LLM variance.
 async function callMatchApi(jdText, resumeText) {
   const base = (FEISHU.matchBaseUrl || MATCH_DEFAULT_BASE).replace(/\/+$/, "");
   const ctrl = new AbortController();
-  const timer = setTimeout(() => ctrl.abort(), 30000);
+  const timer = setTimeout(() => ctrl.abort(), 60000);
   const headers = { "Content-Type": "application/json" };
   if (FEISHU.matchToken) headers["X-Match-Token"] = FEISHU.matchToken;
   let res;
