@@ -326,6 +326,9 @@ function extractJobPageData() {
       '[class*="job-title-text"]',
       '[class*="detail-title"]',
       // mokahr campus_apply (SPA 渲染，class 名不固定)
+      // moka 设计系统类名形如 sd-foundation-heading-40-axnSz：前缀稳定，尾部 hash 每次发版会变，
+      // 所以只匹配前缀。岗位名是页面第一个该类的元素，其后是同类的 JD 章节标题（职位描述/职位信息）
+      '[class*="sd-foundation-heading"]',
       '[class*="position-name"]',
       '[class*="campus-position"]',
       '[class*="campus-title"]',
@@ -364,23 +367,38 @@ function extractJobPageData() {
     }
   }
 
+  // Site-title detection: a title like "Company - Campus Recruitment" carries no job title at all.
+  // Picking any segment from such a title yields the company name (common on SPA sites like moka).
+  let pageTitleHasNoJob = false;
+
+  // Job-title keywords: a hit means "this reads like a job title, not a company name"
+  const JOB_KEYWORD = /工程师|经理|专员|运营|设计|开发|产品|算法|测试|销售|市场|实习|管培|顾问|分析师|技术员|架构|数据|架构师|负责人|总监|主管|组长|专家|研究员|策划|编辑|编导|翻译|审核|运维|安全|后端|前端|全栈|iOS|Android|SRE|DBA|QA|HR|BP|CFO|CTO|COO|VP|Head|Lead|Principal|Staff|Senior|Junior|Intern|Trainee|Engineer|Specialist|Assistant|Manager|Consultant|Analyst|Developer|Architect|Director/i;
+
   if (!position || isBadTitle(position)) {
     // Split by common separators: -, |, –, —, ｜, _, ·, 「_」
     const segs = pageTitle.split(/[\-|–—|｜_·「」]/).map(clean).filter(Boolean);
+    // Only one non-blocklisted segment, that segment has no job keyword, and the title still
+    // holds a blocklisted segment (e.g. "校园招聘") -> the title is a site title, not a job title.
+    const nonBad = segs.filter((s) => !isBadTitle(s));
+    pageTitleHasNoJob =
+      nonBad.length === 1 && !JOB_KEYWORD.test(nonBad[0]) && segs.length > nonBad.length;
     let bestPos = "";
     let bestScore = -1;
     for (const s of segs) {
       if (isBadTitle(s)) continue;
       let score = s.length;
       // Job title keywords boost score
-      if (/工程师|经理|专员|运营|设计|开发|产品|算法|测试|销售|市场|实习|管培|顾问|分析师|技术员|架构|数据|架构师|负责人|总监|主管|组长|专家|研究员|策划|编辑|编导|翻译|审核|运维|安全|后端|前端|全栈|iOS|Android|iOS|SRE|DBA|QA|HR|BP|CFO|CTO|COO|VP|Head|Lead|Principal|Staff|Senior|Junior|Intern|Trainee|Engineer|Specialist|Assistant|Manager|Consultant|Analyst|Developer|Architect|Director|VP/i.test(s)) score += 30;
+      if (JOB_KEYWORD.test(s)) score += 30;
       if (score > bestScore) { bestScore = score; bestPos = s; }
     }
-    if (bestPos) position = bestPos;
+    if (bestPos && !pageTitleHasNoJob) position = bestPos;
   }
 
   if (!position || isBadTitle(position)) {
-    position = clean(pageTitle.split(/[-|–—|｜]/)[0]) || pageTitle;
+    // Skip when the title is a site title: segment [0] would be the company name
+    if (!pageTitleHasNoJob) {
+      position = clean(pageTitle.split(/[-|–—|｜]/)[0]) || pageTitle;
+    }
   }
 
   if (!position || isBadTitle(position)) {
