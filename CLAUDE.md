@@ -221,7 +221,9 @@ PROJECT_REVIEW.md 本质是**你的面试作品集级复盘文档**，受众是�
 ### 插件 & 页面抓取
 - React SPA 页面（如快手招聘、Mokahr 校招）内容动态渲染，岗位名可能在 `div` / `span` / `h3` 而非 `h1/h2` 中，CSS 选择器需持续补充
 - BOSS直聘有 CSS 反爬干扰文本（display:none / opacity:0），需 getComputedStyle 过滤
-- 页面标题分割提取岗位名时，公司名可能误占岗位位，需评分制+岗位关键词加权
+- 页面标题分割提取岗位名时，公司名可能误占岗位位。**光靠评分制+岗位关键词加权不够**：标题若是「公司名 - 校园招聘」这类**站点标题**（本身不含岗位名），评分制挑出来的必然是公司名。已加「站点标题」判定兜住这一类（`popup.js` 第 3/4 层，站点无关）
+- **moka 是 hash 路由 SPA**（岗位 id 在 `#/job/<uuid>`），`document.title` 是「公司名 - 校园招聘」这种站点标题、**不含岗位名**；岗位名在 `div[class*="sd-foundation-heading"]` 里，**页面没有 h1**。类名尾部是发版就变的 hash，只能匹配前缀
+- **moka 公司名靠第 6 层「反推」拿到**：`og:site_name` 为 `null`、公司名不在 DOM 独立节点，靠 pageTitle 分段反推；生效前提是 `position` 已正确——岗位名填错，公司名会一起错，两个字段是互相推导的
 - `[class*="post-title"]` 不匹配 `position-title`（子串不包含 "post-title"），双 attribute 选择器 `[class*="position"][class*="title"]` 更可靠
 
 ### 飞书集成
