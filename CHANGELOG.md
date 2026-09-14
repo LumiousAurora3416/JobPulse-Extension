@@ -1,5 +1,31 @@
 # Changelog
 
+## v1.8.0 (2026-09-14)
+
+### 新增 — 「企业性质」字段（全链路：飞书列 + 插件 + Bot 对话）
+
+投递表新增「企业性质」单选列（央国企 / 民营企业 / 外企 / 其他），用于按企业性质切分投递数据（后续可做「央国企 vs 民企的回复率对比」这类归因）。
+
+**背景**：原有字段无法区分企业性质，而秋招里「央国企 / 民企 / 外企」的投递策略和回复节奏差异很大，属于投递决策的关键维度。**不要求自动识别**——识别公司性质需要外部工商数据，成本高且易错，交给用户自选更可靠。
+
+- **飞书建列**（`agent/init_match_tables.py`）：新增 `ensure_company_type_column()`，镜像已有 `ensure_match_score_column()` 的幂等写法；新增 `COMPANY_TYPE_OPTIONS` 常量；`main()` 中在「匹配分」之后调用；文件头 docstring 补第 4 条职责
+- **插件**（`popup.html` / `popup.js`）：「薪资」与「结果」之间新增「企业性质」下拉框（首个选项为空「— 请选择 —」）；提交时读取，**选了才写**该列
+- **Bot 对话**（`agent/message_agent.py`）：系统提示词字段清单 + 第 8 条规则（用户提到「国企/央企/外企/民企/合资」才传 `company_type`，**没说不许猜**）；`create_record` 工具 schema 加 `company_type`（`enum` 直接引用常量，杜绝非法值）；`_execute_create` 读参数并过滤非法值，非空才写字段
+
+**关键技术点 — 单选字段不能写入不存在的选项**：飞书多维表格的单选字段，写入一个列里没有的选项名会**直接报错 `FieldConvFail`**，而不是自动新增选项。所以「建列时必须把 4 个选项一起写进 `property.options`」是硬前提，且三处选项值必须一致：
+
+| 位置 | 载体 |
+|---|---|
+| 飞书列本身 | `init_match_tables.py` 的 `COMPANY_TYPE_OPTIONS`（建列时写入 `property.options`） |
+| 插件下拉框 | `popup.html` 的 `<option>` 列表 |
+| Bot 工具契约 | `message_agent.py` 的 `COMPANY_TYPES`（同时作为 schema 的 `enum`） |
+
+**防御设计**：Bot 侧做了双重保险——`enum` 约束 LLM 只能从 4 个值里选或干脆不传，代码里 `if company_type not in COMPANY_TYPES: company_type = ""` 再兜一层。因为**一个非法值会让整条记录写入失败**（不只是这一列丢值），必须挡住。插件侧同理：未选择时不写该字段，避免把空值/脏值写进单选列。
+
+**验证**：`node --check popup.js` 通过；`py_compile` 两个 py 文件通过；`python init_match_tables.py` 实跑——「企业性质」列新建成功，其余字段全部「已存在，跳过」（幂等性确认）；API 回读该列：`type=3`（单选），`options=['央国企','民营企业','外企','其他']`
+
+**注意**：插件侧改动需 **reload 扩展** 才生效（MV3 无热更新）。
+
 ## v1.7.1 (2026-09-11)
 
 ### 修复 — 岗位名被误识别为公司名（moka 站点标题误判）

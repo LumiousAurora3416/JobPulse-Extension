@@ -5,6 +5,7 @@
      并补齐字段：简历名称 / 适用方向(单选) / 简历正文 / 来源版本 / 更新时间
   2. 若简历库为空且本地存在 resume.txt，写入 1 行种子（当前主简历）
   3. 给投递表（FEISHU_TABLE_ID）新增「匹配分」数字列（不存在才加）
+  4. 给投递表新增「企业性质」单选列（不存在才加），选项见 COMPANY_TYPE_OPTIONS
 
 用法: cd agent && python init_match_tables.py
 凭据来自 agent/.env（config.py 自动加载）。不要放进 Render 部署链。
@@ -30,6 +31,9 @@ T_NUMBER = 2      # 数字（记录值传 number）
 T_SINGLE = 3      # 单选（记录值传「选项名字符串」）
 T_DATE = 5        # 日期（记录值传毫秒时间戳）
 T_LASTMOD = 1002  # 最后更新时间（自动字段，不可手动写值）
+
+# 投递表「企业性质」单选列的可选值（与 popup.html 的下拉框、message_agent 的工具 enum 保持一致）
+COMPANY_TYPE_OPTIONS = ["央国企", "民营企业", "外企", "其他"]
 
 RESUME_TABLE_NAME = "简历库"
 RESUME_FIELDS = [
@@ -214,6 +218,28 @@ def ensure_match_score_column(token):
     print(f"  ✔ 投递表已新增「匹配分」数字列")
 
 
+def ensure_company_type_column(token):
+    """给投递表加「企业性质」单选列（只新建，不影响任何已有列）。
+
+    必须先把列和选项建好，插件/Bot 才能写值——飞书单选字段写入一个不存在的
+    选项会直接报错（FieldConvFail），而不是自动新增选项。
+    """
+    existing = list_field_names(token, FEISHU_TABLE_ID)
+    if "企业性质" in existing:
+        print(f"  · 投递表已有「企业性质」列，跳过")
+        return
+    api_post(
+        token,
+        f"{BITABLE}/{FEISHU_APP_TOKEN}/tables/{FEISHU_TABLE_ID}/fields",
+        {
+            "field_name": "企业性质",
+            "type": T_SINGLE,
+            "property": {"options": [{"name": n} for n in COMPANY_TYPE_OPTIONS]},
+        },
+    )
+    print(f"  ✔ 投递表已新增「企业性质」单选列（{' / '.join(COMPANY_TYPE_OPTIONS)}）")
+
+
 def main():
     print("== JobPulse 匹配度 V1 · 飞书表结构初始化 ==")
     if not (FEISHU_APP_ID and FEISHU_APP_SECRET and FEISHU_APP_TOKEN and FEISHU_TABLE_ID):
@@ -241,9 +267,10 @@ def main():
     print("— 种子简历 —")
     seed_resume(token, resume_tid, ut_type)
 
-    # 4) 投递表加「匹配分」列
+    # 4) 投递表加「匹配分」「企业性质」列
     print("— 投递表加列 —")
     ensure_match_score_column(token)
+    ensure_company_type_column(token)
 
     print("\n== 完成 ==")
     print(f"简历库 table_id = {resume_tid}")

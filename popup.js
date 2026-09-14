@@ -1058,6 +1058,8 @@ document.addEventListener("DOMContentLoaded", async function () {
     const result = document.getElementById("result").value;
     const salaryEl = document.getElementById("salary");
     const salary = salaryEl ? salaryEl.value.trim() : "";
+    const companyTypeEl = document.getElementById("companyType");
+    const companyType = companyTypeEl ? companyTypeEl.value : "";
 
     if (!position) {
       showMessage("请填写岗位名称", false);
@@ -1083,6 +1085,8 @@ document.addEventListener("DOMContentLoaded", async function () {
       结果: result,
     };
     if (salary) fields["薪资"] = salary;
+    // Optional: only write when the user picked one (empty -> leave the column untouched)
+    if (companyType) fields["企业性质"] = companyType;
     // Attach the latest match score (V1 匹配度：高分直投）when a fresh report exists.
     if (currentMatch && currentMatch.overall_score != null) {
       fields["匹配分"] = currentMatch.overall_score; // numeric field expects a number

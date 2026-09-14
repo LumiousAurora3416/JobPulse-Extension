@@ -21,6 +21,10 @@ from config import FOLLOW_UP_HOURS
 from memory import append_turn, get_history
 from profile import get_profile, upsert_facts, format_profile
 
+# 「企业性质」单选列的可选值。三处必须一致：这里 / 飞书列选项（init_match_tables.py）
+# / popup.html 的下拉框。飞书单选字段写入不存在的选项会直接报错，不能自动新增。
+COMPANY_TYPES = ["央国企", "民营企业", "外企", "其他"]
+
 
 # ── Agent 系统提示词（function calling 模式） ──────────────────
 
@@ -30,6 +34,7 @@ AGENT_SYSTEM_PROMPT = """你是 JobPulse 求职投递助手，帮助用户在飞
 # 你的能力
 你可以调用工具查询、录入、更新投递数据。数据存储在飞书多维表格，字段包括：
 - 公司、岗位、岗位JD、投递链接、薪资
+- 企业性质：央国企 / 民营企业 / 外企 / 其他
 - 结果：待投递 / 简历 / 面试 / 无反馈 / 简历挂
 - 提醒状态：待跟进 / 已跟进 / 已失效 / 有反馈
 - 投递天数、面试时间
@@ -42,6 +47,8 @@ AGENT_SYSTEM_PROMPT = """你是 JobPulse 求职投递助手，帮助用户在飞
 5. 涉及具体日期时，以当前日期 {today} 为基准换算「昨天」「后天」等说法。
 6. 用户只是闲聊、打招呼、道谢，或意图不明确时，直接自然回复即可，不要调用工具。
 7. 查询结果为空时，如实说明，并给用户下一步建议。
+8. 用户提到公司性质（如「国企」「央企」「外企」「民企」「合资」）时，create_record 要带上
+   company_type 参数，并归一到上面四个值之一；用户没说就**不要猜、不要传**。
 
 # 长期记忆
 - 用户提到的长期偏好/背景（主要投什么方向、所在城市、技能栈、工作年限等）用 save_memory 记住，跨会话保留。
@@ -336,6 +343,10 @@ def _execute_create(ctx, **kwargs) -> dict:
     position = kwargs.get("position", "") or ""
     platform = kwargs.get("platform", "") or ""
     jd = kwargs.get("jd", "") or ""
+    company_type = kwargs.get("company_type", "") or ""
+    # Single select: drop unknown values, otherwise Feishu rejects the whole write
+    if company_type not in COMPANY_TYPES:
+        company_type = ""
 
     if not company and not position:
         return {"ok": False, "error": "没识别到公司和岗位信息，麻烦说清楚一些，比如「我在Boss投了字节前端」"}
@@ -362,6 +373,8 @@ def _execute_create(ctx, **kwargs) -> dict:
         "提醒状态": "待跟进",
         "投递时间": today_ms,
     }
+    if company_type:  # optional: only write when the user actually said it
+        fields["企业性质"] = company_type
     record_id = client.create_record(fields)
     if not record_id:
         return {"ok": False, "error": "创建失败，请稍后重试"}
@@ -544,13 +557,16 @@ TOOLS: dict[str, dict] = {
         "function": _execute_create,
         "schema": {"type": "function", "function": {
             "name": "create_record",
-            "description": "录入一条新的投递记录（用户刚投了某家公司某个岗位），可带平台名和岗位JD描述",
+            "description": "录入一条新的投递记录（用户刚投了某家公司某个岗位），可带平台名、岗位JD描述、公司性质",
             "parameters": {"type": "object",
                 "properties": {
                     "company": {"type": "string", "description": "公司名，如 字节"},
                     "position": {"type": "string", "description": "岗位名，如 前端工程师"},
                     "platform": {"type": "string", "description": "投递平台，可选，如 Boss/官网"},
                     "jd": {"type": "string", "description": "岗位JD描述/要求文本，可选"},
+                    "company_type": {"type": "string",
+                        "description": "公司性质（企业性质）。仅在用户明确提到时传，不要猜",
+                        "enum": COMPANY_TYPES},
                 },
                 "required": []},
         }},
