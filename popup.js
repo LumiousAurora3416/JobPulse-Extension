@@ -9,6 +9,7 @@ const JD_SEND_MAX = 2000; // 对齐引擎 MATCH_MAX_JD_CHARS
 const RESUME_SEND_MAX = 4000; // 对齐引擎 MATCH_MAX_RESUME_CHARS
 let RESUME_TABLE_ID_CACHE = null; // 自动查找到的简历库 table_id 缓存
 let currentMatch = null; // 最近一次匹配报告（供直投时写入「匹配分」）
+let duplicateConfirmed = false; // 查重命中后，用户再点一次「写入飞书」才置真（两步确认）
 const TOKEN_URL =
   "https://open.feishu.cn/open-apis/auth/v3/tenant_access_token/internal";
 
@@ -99,6 +100,51 @@ async function createBitableRecord(token, fields) {
     throw new Error(`[${code}] ${msg || "写入失败"}${hint}`);
   }
   return data;
+}
+
+/**
+ * 拉取投递表全部记录（分页）。仅用于查重；最多 20 页（1 万条）防死循环。
+ */
+async function listAllRecords(token) {
+  const items = [];
+  let pageToken = "";
+  for (let page = 0; page < 20; page++) {
+    const url =
+      recordUrl() +
+      "?page_size=500&text_field_as_array=false" +
+      (pageToken ? `&page_token=${encodeURIComponent(pageToken)}` : "");
+    const res = await fetch(url, {
+      headers: { Authorization: `Bearer ${token}` },
+    });
+    const data = await readFeishuJson(res, "读取投递表");
+    if (data.code !== 0) {
+      throw new Error(`[${data.code}] ${data.msg || "读取投递表失败"}`);
+    }
+    const d = data.data || {};
+    items.push(...(d.items || []));
+    if (!d.has_more || !d.page_token) break;
+    pageToken = d.page_token;
+  }
+  return items;
+}
+
+/**
+ * 查重：同「公司」+ 同「岗位」是否已有记录。命中返回该记录，否则返回 null。
+ * 规则与 Bot 的 create_record 去重保持一致（公司、岗位按原始文本比对）。
+ */
+async function findDuplicateRecord(token, company, position) {
+  if (!company || !position) return null;
+  const norm = (s) => String(s || "").trim();
+  const items = await listAllRecords(token);
+  return (
+    items.find((it) => {
+      const f = it.fields || {};
+      return (
+        norm(fieldText(f["公司"])) === norm(company) &&
+        norm(fieldText(f["岗位"])) === norm(position)
+      );
+    }) || null
+  );
 }
 
 /**
@@ -1047,6 +1093,12 @@ document.addEventListener("DOMContentLoaded", async function () {
     currentMatch = null; // JD edited -> stale match must not attach to submit
     resetSubmitLabel();
   });
+  // 改了岗位或公司，「确认重复写入」的状态就失效——否则会绕过查重写到另一条记录上
+  ["position", "company"].forEach(function (id) {
+    document.getElementById(id).addEventListener("input", function () {
+      duplicateConfirmed = false;
+    });
+  });
 
   document.getElementById("submitBtn").addEventListener("click", async function () {
     hideMessage();
@@ -1095,7 +1147,25 @@ document.addEventListener("DOMContentLoaded", async function () {
     setLoading(true);
     try {
       const token = await getTenantAccessToken();
+
+      // 查重：同公司+同岗位已有记录时**先不写入**，提示后再点一次才强制写入。
+      // 用两步确认而不是 window.confirm()——弹窗会抢焦点，有把扩展弹窗关掉的风险。
+      if (!duplicateConfirmed) {
+        const dup = await findDuplicateRecord(token, company, position);
+        if (dup) {
+          const dupResult = fieldText((dup.fields || {})["结果"]) || "未更新";
+          duplicateConfirmed = true; // 下一次点击即视为「确认重复写入」
+          showMessage(
+            `表格中已有「${company} - ${position}」（当前结果：${dupResult}）。` +
+              `如确认要再写入一条，请再点一次「写入飞书」。`,
+            false
+          );
+          return; // finally 会复位 loading 状态
+        }
+      }
+
       await createBitableRecord(token, fields);
+      duplicateConfirmed = false;
       showMessage("已同步到飞书多维表格", true);
     } catch (e) {
       showMessage(e.message || String(e), false);
