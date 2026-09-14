@@ -58,29 +58,37 @@ function fieldValue(rec, name) {
 
 // ── Data aggregation ──
 
+// 「结果」列的分组。必须与 agent/status_rules.py 保持一致（改一处要三处同步：
+// status_rules.py / 本文件 / 飞书列选项）。提醒状态列已改为公式列，不再参与统计。
+var RESULT_REMINDABLE = ["简历", "测评", "面试"];                 // 进行中（还会被催）
+var RESULT_LOST = ["简历挂", "一面挂", "二面挂", "三面挂"];         // 被拒
+var RESULT_OFFER = ["offer"];
+var RESULT_QUIET = ["无反馈", "放弃"];                            // 无结论结束
+var RESULT_INTERVIEWED = ["面试", "一面挂", "二面挂", "三面挂", "offer"]; // 走到过面试的
+
 function aggregate(records) {
   var total = records.length;
-  var interview = 0;
   var toApply = 0;
-  var resumeSent = 0;
-  var pending = 0;
-  var followed = 0;
+  var inProgress = 0;
+  var interviewed = 0;
+  var offered = 0;
   var lost = 0;
+  var quiet = 0;
 
   var companyMap = {};
   var weekMap = {};
 
   records.forEach(function (rec) {
     var status = fieldValue(rec, "结果");
-    var remind = fieldValue(rec, "提醒状态");
     var company = fieldValue(rec, "公司") || "未知";
 
-    if (status === "面试") interview++;
+    // 结果列只存"当前状态"，但它也是走得最远的状态，所以能推出漏斗
     if (status === "待投递") toApply++;
-    if (status === "简历") resumeSent++;
-    if (remind === "待跟进") pending++;
-    if (remind === "已跟进") followed++;
-    if (remind === "已失效" || remind === "简历挂") lost++;
+    else if (RESULT_OFFER.indexOf(status) >= 0) offered++;
+    else if (RESULT_LOST.indexOf(status) >= 0) lost++;
+    else if (RESULT_QUIET.indexOf(status) >= 0) quiet++;
+    else if (RESULT_REMINDABLE.indexOf(status) >= 0) inProgress++;
+    if (RESULT_INTERVIEWED.indexOf(status) >= 0) interviewed++;
 
     // Company aggregation
     companyMap[company] = (companyMap[company] || 0) + 1;
@@ -117,11 +125,12 @@ function aggregate(records) {
   return {
     total: total,
     toApply: toApply,
-    interview: interview,
-    resumeSent: resumeSent,
-    pending: pending,
-    followed: followed,
+    applied: total - toApply, // 真正投出去的（总投递里减去还没投的）
+    inProgress: inProgress,
+    interviewed: interviewed,
+    offered: offered,
     lost: lost,
+    quiet: quiet,
     companies: companies,
     weeks: weeks,
   };
@@ -135,10 +144,10 @@ function renderCharts(data) {
   new Chart(funnelCtx, {
     type: "bar",
     data: {
-      labels: ["总投递", "待投递", "简历筛选", "进入面试"],
+      labels: ["总投递", "已投递", "进入面试", "offer"],
       datasets: [{
         label: "数量",
-        data: [data.total, data.toApply, data.resumeSent, data.interview],
+        data: [data.total, data.applied, data.interviewed, data.offered],
         backgroundColor: ["#3370ff", "#8e53d1", "#0d7a3e", "#d46b08"],
         borderRadius: 4,
       }],
@@ -233,8 +242,8 @@ async function main() {
     // Update stats
     document.getElementById("statTotal").textContent = data.total;
     document.getElementById("statToApply").textContent = data.toApply;
-    document.getElementById("statInterview").textContent = data.interview;
-    document.getElementById("statPending").textContent = data.pending;
+    document.getElementById("statInProgress").textContent = data.inProgress;
+    document.getElementById("statOffer").textContent = data.offered;
     document.getElementById("statLost").textContent = data.lost;
 
     renderCharts(data);

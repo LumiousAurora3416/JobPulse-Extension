@@ -18,7 +18,9 @@ import time
 from datetime import datetime, timezone, timedelta
 
 from config import (
-    FOLLOW_UP_HOURS,
+    FOLLOW_UP_FIRST_DAYS,
+    FOLLOW_UP_INTERVAL_DAYS,
+    FOLLOW_UP_MAX_CARDS,
     ENABLE_ANALYSIS,
     FEISHU_RECEIVER_ID,
     FEISHU_RECEIVER_TYPE,
@@ -27,6 +29,13 @@ from config import (
 )
 from feishu import FeishuClient
 from cards import follow_up_card, analysis_card, stats_card, interview_reminder_card
+from status_rules import (
+    RESULT_LOST,
+    RESULT_OFFER,
+    RESULT_QUIET,
+    is_terminal,
+    should_remind,
+)
 
 
 def _parse_ts_ms(ts):
@@ -72,6 +81,23 @@ def get_days_since(record: dict, client: FeishuClient) -> int:
     return 999  # fallback: 无法确定天数时默认需要跟进
 
 
+def _today_start_ms() -> int:
+    """今天 00:00 的毫秒时间戳（日期字段写当天零点，便于按天算间隔）。"""
+    now = datetime.now()
+    return int(datetime(now.year, now.month, now.day).timestamp() * 1000)
+
+
+def get_days_since_last_remind(record: dict, client: FeishuClient):
+    """距上次提醒的天数；从没提醒过返回 None（排序时最优先）。
+
+    提醒节奏完全由本字段驱动——「提醒状态」已改为公式列（只给人看，代码不读不写）。
+    """
+    ts = _parse_ts_ms(record.get("fields", {}).get("上次提醒日期"))
+    if not ts:
+        return None
+    return (time.time() * 1000 - ts) / 86400000
+
+
 def run_follow_up():
     """高频追踪：找出待跟进的记录并发送卡片"""
     print("=" * 50)
@@ -89,25 +115,30 @@ def run_follow_up():
             return
         print(f"  ✅ 共 {len(records)} 条记录")
 
-        # 2. 筛选需要提醒的记录（排除"待投递"状态）
-        pending = []
+        # 2. 筛选候选：结果处于「会被催的过程态」，且满足首次/复催的时间门槛。
+        #    「是否继续提醒」完全由结果推导（终态即停），不再依赖手工标 提醒状态
+        candidates = []
         for rec in records:
-            status = client.field_value(rec, "结果")
-            if status == "待投递":
-                continue
-            remind_status = client.field_value(rec, "提醒状态")
-            if remind_status not in ("", "待跟进"):
-                continue
+            result = client.field_value(rec, "结果")
+            if not should_remind(result):
+                continue  # 终态（挂/offer/无反馈/放弃）与「待投递」都不催
             days = get_days_since(rec, client)
-            threshold_days = FOLLOW_UP_HOURS / 24
-            if days >= threshold_days:
-                pending.append((rec, days))
+            if days < FOLLOW_UP_FIRST_DAYS:
+                continue  # 太早跟进没意义：简历可能还没被处理
+            since_last = get_days_since_last_remind(rec, client)
+            if since_last is not None and since_last < FOLLOW_UP_INTERVAL_DAYS:
+                continue  # 复催间隔没到，先不打扰
+            candidates.append((rec, days, since_last))
 
-        if not pending:
+        if not candidates:
             print("  ✅ 没有需要跟进的记录")
             return
 
-        print(f"  📋 {len(pending)} 条需要跟进")
+        # 最久没催的排最前（从没催过 = None → 视为最优先）；同为"从没催过"时，
+        # 再按投递天数从大到小排——否则一大批"从没催过"会并列，名次实际由记录顺序决定
+        candidates.sort(key=lambda c: (c[2] is not None, -(c[2] or 0), -c[1]))
+        pending = candidates[:FOLLOW_UP_MAX_CARDS]
+        print(f"  📋 {len(candidates)} 条待跟进，本次推送 {len(pending)} 条（上限 {FOLLOW_UP_MAX_CARDS}）")
 
         # 3. 发送跟进卡片
         store_path = os.path.join(os.path.dirname(__file__), "message_store.json")
@@ -119,32 +150,38 @@ def run_follow_up():
                 msg_store = {}
 
         notify_count = 0
-        for rec, days in pending:
+        today_ms = _today_start_ms()
+        for rec, days, _since_last in pending:
             company = client.field_value(rec, "公司")
             position = client.field_value(rec, "岗位")
             url = client.field_value(rec, "投递链接")
+            result = client.field_value(rec, "结果")
             record_id = rec.get("record_id", "")
 
-            card = follow_up_card(company, position, days, url, record_id)
+            # 按钮按当前结果动态生成（卡片在哪个阶段就只给这个阶段可能的下一步）
+            card = follow_up_card(company, position, days, url, record_id, result)
 
             msg_id = ""
+            delivered = False
             if FEISHU_WEBHOOK:
-                ok = client.send_card_via_webhook(FEISHU_WEBHOOK, card)
+                delivered = bool(client.send_card_via_webhook(FEISHU_WEBHOOK, card))
             elif FEISHU_RECEIVER_ID:
                 msg_id = client.send_card(FEISHU_RECEIVER_ID, card, FEISHU_RECEIVER_TYPE)
-                ok = bool(msg_id)
+                delivered = bool(msg_id)
             else:
                 print("  ⚠️ 未配置 FEISHU_RECEIVER_ID 或 FEISHU_WEBHOOK，跳过发送")
                 print(f"    调试：{company} - {position}（{days}天）")
-                ok = True
 
-            if ok:
+            if delivered:
                 notify_count += 1
-                print(f"  ✅ {company} - {position}（{days}天）")
-                if msg_id and record_id:
-                    msg_store[record_id] = msg_id
-                    # 同时写入飞书表格，回调时可直接从记录读取
-                    client.update_record(record_id, {"消息ID": msg_id})
+                print(f"  ✅ {company} - {position}（{days}天，{result}）")
+                if record_id:
+                    # 只有真发出去了才记「上次提醒日期」，否则下一轮仍会重试
+                    patch = {"上次提醒日期": today_ms}
+                    if msg_id:
+                        msg_store[record_id] = msg_id
+                        patch["消息ID"] = msg_id  # 回调时可直接从记录读取
+                    client.update_record(record_id, patch)
             time.sleep(0.3)  # 限速
 
         # 保存 message_id 映射供回调使用
@@ -156,6 +193,19 @@ def run_follow_up():
     except Exception as e:
         print(f"  ❌ 追踪任务异常: {e}")
         raise
+
+
+def _entry_mark(status: str) -> str:
+    """归因提示里给每条投递配个进度标记（全部取自「结果」列的取值）。"""
+    if status in RESULT_OFFER:
+        return "🎉 offer"
+    if status == "面试":
+        return "✅ 面试中"
+    if status in RESULT_LOST:
+        return "❌ 被拒"
+    if status in RESULT_QUIET:
+        return "📋 无结论结束"
+    return "⏳ 进行中"
 
 
 def run_analysis():
@@ -180,7 +230,6 @@ def run_analysis():
         position = client.field_value(rec, "岗位")
         jd_text = client.field_value(rec, "岗位JD")
         status = client.field_value(rec, "结果")
-        remind = client.field_value(rec, "提醒状态")
         if status == "待投递":
             continue
         if jd_text and len(jd_text) > 20:
@@ -188,8 +237,7 @@ def run_analysis():
                 "company": company,
                 "position": position,
                 "jd": jd_text[:2000],  # 截断过长的 JD
-                "status": status or "投递中",
-                "remind": remind,
+                "status": status,
             })
 
     if not jd_entries:
@@ -198,21 +246,25 @@ def run_analysis():
 
     print(f"  📊 共 {len(jd_entries)} 个有效 JD 待分析")
 
-    # 构造 LLM 提示
+    # 构造 LLM 提示（统计全部按「结果」状态机；原实现拿结果列的值去比提醒状态的取值，恒为 0）
     total = len(jd_entries)
-    interview = sum(1 for j in jd_entries if j["status"] in ("面试", "有反馈"))
-    rejected = sum(1 for j in jd_entries if j["remind"] in ("已失效", "被拒/无反馈"))
-    pending_count = total - interview - rejected
+    interview = sum(1 for j in jd_entries if j["status"] == "面试")
+    rejected = sum(1 for j in jd_entries if j["status"] in RESULT_LOST)
+    offered = sum(1 for j in jd_entries if j["status"] in RESULT_OFFER)
+    quiet = sum(1 for j in jd_entries if j["status"] in RESULT_QUIET)
+    pending_count = total - interview - rejected - offered - quiet
 
     prompt = f"""你是一个求职复盘教练。以下是用户近期投递的岗位信息汇总：
 
 总投递数：{total}
-进入面试：{interview}
-被拒/无反馈：{rejected}
-待跟进：{pending_count}
+面试中：{interview}
+被拒（挂）：{rejected}
+已拿 offer：{offered}
+无结论结束（无反馈/放弃）：{quiet}
+仍在进行：{pending_count}
 
 各岗位详情：
-{chr(10).join(f"- [{j['company']}] {j['position']}: {'✅ 面试' if j['status'] in ('面试','有反馈') else '❌ 被拒' if j['remind'] in ('已失效','被拒/无反馈') else '⏳ 待跟进'} | JD: {j['jd'][:300]}" for j in jd_entries[:20])}
+{chr(10).join(f"- [{j['company']}] {j['position']}: {_entry_mark(j['status'])} | JD: {j['jd'][:300]}" for j in jd_entries[:20])}
 
 请从以下三个方面给出分析（控制在 800 字以内，用中文）：
 1. **投递画像**：投递的行业/岗位分布特征
@@ -266,30 +318,28 @@ def run_statistics():
         print("  ⚠️ 表格为空，无数据可统计")
         return
 
-    # Count by status
-    to_apply = 0
-    interview = 0
-    pending = 0
-    followed = 0
-    lost = 0
+    # 按「结果」状态机分桶（不再读已废弃的 提醒状态）
+    to_apply = in_progress = offered = lost = quiet = unknown = 0
 
     for rec in records:
-        status = client.field_value(rec, "结果")
-        remind = client.field_value(rec, "提醒状态")
-        if status == "待投递":
+        result = client.field_value(rec, "结果")
+        if result == "待投递":
             to_apply += 1
-        if status == "面试":
-            interview += 1
-        if remind == "待跟进":
-            pending += 1
-        if remind == "已跟进":
-            followed += 1
-        if remind in ("已失效", "被拒/无反馈"):
+        elif result in RESULT_OFFER:
+            offered += 1
+        elif result in RESULT_LOST:
             lost += 1
+        elif result in RESULT_QUIET:
+            quiet += 1
+        elif should_remind(result):
+            in_progress += 1
+        else:
+            unknown += 1  # 空值/未定义值：单独计出来，便于发现脏数据
 
-    print(f"  📊 投递 {total} | 待投递 {to_apply} | 面试 {interview} | 待跟进 {pending} | 已跟进 {followed} | 已失效 {lost}")
+    print(f"  📊 投递 {total} | 待投递 {to_apply} | 进行中 {in_progress} | offer {offered} | 已挂 {lost} | 无结论 {quiet}"
+          + (f" | ⚠️ 未识别 {unknown}" if unknown else ""))
 
-    card = stats_card(total, to_apply, interview, pending, followed, lost)
+    card = stats_card(total, to_apply, in_progress, offered, lost, quiet)
 
     if FEISHU_RECEIVER_ID:
         ok = client.send_card(FEISHU_RECEIVER_ID, card, FEISHU_RECEIVER_TYPE)
@@ -304,7 +354,7 @@ def run_statistics():
         else:
             print("  ❌ 统计卡片发送失败")
     else:
-        print(f"\n📈 统计预览：投递 {total} | 待投递 {to_apply} | 面试 {interview} ({interview / total * 100:.1f}%) | 待跟进 {pending} | 已失效 {lost}")
+        print(f"\n📈 统计预览：投递 {total} | 待投递 {to_apply} | 进行中 {in_progress} | offer {offered} ({offered / total * 100:.1f}%) | 已挂 {lost} | 无结论 {quiet}")
 
 
 def run_interview_reminder():

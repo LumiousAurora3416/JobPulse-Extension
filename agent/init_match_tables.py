@@ -21,7 +21,14 @@ import requests
 
 sys.path.insert(0, str(Path(__file__).parent))
 from config import FEISHU_APP_ID, FEISHU_APP_SECRET, FEISHU_APP_TOKEN, FEISHU_TABLE_ID
-from status_rules import RESULT_OPTIONS, diff_with_feishu
+from status_rules import (
+    RESULT_OPTIONS,
+    RESULT_TERMINAL,
+    RESULT_LOST,
+    RESULT_OFFER,
+    RESULT_QUIET,
+    diff_with_feishu,
+)
 
 # ---- Feishu endpoints ----
 BASE = "https://open.feishu.cn/open-apis"
@@ -282,6 +289,16 @@ def check_result_options(token):
         print(f"  ⚠️ 「结果」列有多余选项（代码未定义，可能是拼写/全角半角不一致）: {'、'.join(extra)}")
     if not missing and not extra:
         print(f"  ✔ 「结果」列 {len(actual)} 个选项与 status_rules 完全一致")
+
+    # 终态分组必须恰好划分 RESULT_TERMINAL（三组互斥且并集完整），否则统计会漏数
+    grouped = RESULT_LOST + RESULT_OFFER + RESULT_QUIET
+    if sorted(grouped) != sorted(RESULT_TERMINAL):
+        only_terminal = [o for o in RESULT_TERMINAL if o not in grouped]
+        dup = [o for o in set(grouped) if grouped.count(o) > 1]
+        print(f"  ❌ status_rules 终态分组有误：未归组 {only_terminal}，重复归组 {dup}")
+        ok = False
+    else:
+        print(f"  ✔ 终态分组完整（挂 {len(RESULT_LOST)} / offer {len(RESULT_OFFER)} / 无结论 {len(RESULT_QUIET)}）")
 
     # 提醒状态应为公式列（type=20）：只给人看，代码不读不写
     if "提醒状态" in fields:

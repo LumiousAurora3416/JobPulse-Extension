@@ -23,6 +23,12 @@ RESULT_OPTIONS = RESULT_PROGRESS + RESULT_TERMINAL
 # 会被跟进提醒催的过程态：排除「待投递」——还没投，催"跟进"没意义
 RESULT_REMINDABLE = ["简历", "测评", "面试"]
 
+# 终态的进一步分组（统计/归因用）。三者必须恰好划分 RESULT_TERMINAL，
+# init_match_tables.py 的校验会检查这个划分是否完整。
+RESULT_LOST = ["简历挂", "一面挂", "二面挂", "三面挂"]   # 被拒（挂在某一轮）
+RESULT_OFFER = ["offer"]                                  # 拿到 offer
+RESULT_QUIET = ["无反馈", "放弃"]                          # 无明确结论就结束：石沉大海 / 我主动放弃
+
 
 def is_terminal(result: str) -> bool:
     """该结果是否已到终态（可以停止跟进）。"""

@@ -13,10 +13,12 @@ import json
 import os
 import sys
 import threading
+from datetime import datetime
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 from feishu import FeishuClient
 from cards import updated_card
+from status_rules import RESULT_OPTIONS, is_terminal
 
 try:
     from flask import Flask, request, Response
@@ -121,15 +123,25 @@ def handle_card_action(payload: dict) -> dict:
 
 
 def _process_card_action(record_id: str, new_status: str):
-    """后台线程：更新表格记录 + 替换卡片内容"""
+    """后台线程：更新表格记录 + 替换卡片内容
+
+    按钮的 status 就是「结果」列的合法值（由 status_rules.CARD_ACTIONS 生成），
+    所以直接写「结果」即可——不再维护 结果→提醒状态 的映射表：
+    「是否还要提醒」由代码从结果推导（终态即停），提醒状态列已改为公式列只给人看。
+    """
     try:
         client = FeishuClient()
-        status_map = {
-            "面试": {"提醒状态": "有反馈", "结果": "面试"},
-            "无反馈": {"提醒状态": "已跟进", "结果": "无反馈"},
-            "简历挂": {"提醒状态": "已失效", "结果": "简历挂"},
-        }
-        fields = status_map.get(new_status, {"提醒状态": "已跟进"})
+        if new_status not in RESULT_OPTIONS:
+            print(f"  ❌ 按钮传来的值不在「结果」选项集内: {new_status!r}，拒绝写入")
+            return
+
+        fields = {"结果": new_status}
+        if is_terminal(new_status):
+            # 进终态：这次提醒任务结束，记下日期（也方便在表里看最后一个动作的时间）
+            today = datetime.now()
+            fields["上次提醒日期"] = int(
+                datetime(today.year, today.month, today.day).timestamp() * 1000
+            )
 
         ok = client.update_record(record_id, fields)
         if not ok:

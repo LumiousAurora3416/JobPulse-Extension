@@ -1,75 +1,90 @@
 """飞书消息卡片模板"""
 
+from status_rules import card_actions_for
 
-def follow_up_card(company: str, position: str, days: int, url: str, record_id: str):
-    """投递跟进提醒卡片（交互按钮，回调地址在飞书应用级别配置）"""
-    card = {
-        "config": {"wide_screen_mode": True},
-        "header": {
-            "title": {"tag": "plain_text", "content": "📌 投递跟进提醒"},
-            "template": "blue",
+
+def _result_icon(result: str) -> str:
+    """给结果配个图标：offer 庆祝、面试绿、各种挂红、其余中性。"""
+    if result == "offer":
+        return "🎉"
+    if result == "面试":
+        return "✅"
+    if result and result.endswith("挂"):
+        return "❌"
+    if result == "放弃":
+        return "🚪"
+    if result == "无反馈":
+        return "📋"
+    return "🔹"
+
+
+def _action_button(company: str, position: str, record_id: str, label: str, value: str, index: int):
+    """构造一颗回调按钮。写入的 value 恒取自 status_rules 定义的结果值。"""
+    return {
+        "tag": "button",
+        "text": {"tag": "plain_text", "content": label},
+        "type": "primary" if index == 0 else ("danger" if value.endswith("挂") else "default"),
+        "value": {"action": "update_status", "record_id": record_id, "status": value},
+        "confirm": {
+            "title": {"tag": "plain_text", "content": f"确认更新为「{value}」？"},
+            "text": {"tag": "plain_text", "content": f"将 {company} - {position} 更新为「{value}」"},
         },
-        "elements": [
-            {
-                "tag": "div",
-                "fields": [
-                    {"is_short": True, "text": {"tag": "lark_md", "content": f"**公司**\n{company}"}},
-                    {"is_short": True, "text": {"tag": "lark_md", "content": f"**岗位**\n{position}"}},
-                ],
-            },
-            {"tag": "hr"},
-            {
-                "tag": "div",
-                "fields": [
-                    {"is_short": True, "text": {"tag": "lark_md", "content": f"**已投递**\n{days} 天"}},
-                    {"is_short": True, "text": {"tag": "lark_md", "content": f"**去官网跟进**\n[🔗 打开链接]({url})"} if url else {"tag": "plain_text", "content": " "}},
-                ],
-            },
-            {"tag": "hr"},
-            {"tag": "div", "text": {"tag": "lark_md", "content": "请更新该投递的进展状态："}},
-            {
-                "tag": "action",
-                "actions": [
-                    {
-                        "tag": "button",
-                        "text": {"tag": "plain_text", "content": "✏️ 面试"},
-                        "type": "primary",
-                        "value": {"action": "update_status", "record_id": record_id, "status": "面试"},
-                        "confirm": {"title": {"tag": "plain_text", "content": "确认修改为面试？"}, "text": {"tag": "plain_text", "content": f"将 {company} - {position} 更新为「面试」"}},
-                    },
-                    {
-                        "tag": "button",
-                        "text": {"tag": "plain_text", "content": "📋 无反馈"},
-                        "type": "default",
-                        "value": {"action": "update_status", "record_id": record_id, "status": "无反馈"},
-                        "confirm": {"title": {"tag": "plain_text", "content": "确认无反馈？"}, "text": {"tag": "plain_text", "content": f"标记 {company} - {position} 为「已跟进，暂无反馈」"}},
-                    },
-                    {
-                        "tag": "button",
-                        "text": {"tag": "plain_text", "content": "❌ 简历挂"},
-                        "type": "danger",
-                        "value": {"action": "update_status", "record_id": record_id, "status": "简历挂"},
-                        "confirm": {"title": {"tag": "plain_text", "content": "确认简历挂？"}, "text": {"tag": "plain_text", "content": f"将 {company} - {position} 更新为「简历挂」"}},
-                    },
-                ],
-            },
-        ],
     }
-    return card
+
+
+def follow_up_card(company: str, position: str, days: int, url: str, record_id: str, result: str = ""):
+    """投递跟进提醒卡片（交互按钮，回调地址在飞书应用级别配置）
+
+    按钮按**当前结果**动态生成（status_rules.CARD_ACTIONS）：每颗按钮写入的值必然
+    是结果列的合法选项，从结构上杜绝「按钮写了个不存在的选项 → 整条更新失败」。
+    """
+    elements = [
+        {
+            "tag": "div",
+            "fields": [
+                {"is_short": True, "text": {"tag": "lark_md", "content": f"**公司**\n{company}"}},
+                {"is_short": True, "text": {"tag": "lark_md", "content": f"**岗位**\n{position}"}},
+            ],
+        },
+        {"tag": "hr"},
+        {
+            "tag": "div",
+            "fields": [
+                {"is_short": True, "text": {"tag": "lark_md", "content": f"**已投递**\n{days} 天"}},
+                {"is_short": True, "text": {"tag": "lark_md", "content": f"**当前进展**\n{_result_icon(result)} {result or '—'}"}},
+            ],
+        },
+    ]
+    if url:
+        elements.append({"tag": "div", "text": {"tag": "lark_md", "content": f"[🔗 去官网跟进]({url})"}})
+
+    actions = [
+        _action_button(company, position, record_id, label, value, idx)
+        for idx, (label, value) in enumerate(card_actions_for(result))
+    ]
+    if actions:
+        elements.append({"tag": "hr"})
+        elements.append({"tag": "div", "text": {"tag": "lark_md", "content": "请更新该投递的进展："}})
+        elements.append({"tag": "action", "actions": actions})
+
+    return {
+        "config": {"wide_screen_mode": True},
+        "header": {"title": {"tag": "plain_text", "content": "📌 投递跟进提醒"}, "template": "blue"},
+        "elements": elements,
+    }
 
 
 def updated_card(company: str, position: str, new_status: str):
     """按钮点击后返回的「已更新」卡片，替换原卡片"""
-    status_icon = {"面试": "✅", "无反馈": "📋", "简历挂": "❌"}
-    icon = status_icon.get(new_status, "✅")
+    icon = _result_icon(new_status)
     card = {
         "config": {"wide_screen_mode": True},
         "header": {
-            "title": {"tag": "plain_text", "content": f"{icon} 状态已更新"},
+            "title": {"tag": "plain_text", "content": f"{icon} 进展已更新"},
             "template": "green",
         },
         "elements": [
-            {"tag": "div", "text": {"tag": "lark_md", "content": f"**公司**：{company}\n**岗位**：{position}\n**状态**：{icon} {new_status}"}},
+            {"tag": "div", "text": {"tag": "lark_md", "content": f"**公司**：{company}\n**岗位**：{position}\n**进展**：{icon} {new_status}"}},
             {"tag": "hr"},
             {"tag": "div", "text": {"tag": "lark_md", "content": "📌 表格已自动更新，无需额外操作"}},
         ],
@@ -94,10 +109,16 @@ def analysis_card(summary: str, insights: list[str]):
     return card
 
 
-def stats_card(total: int, to_apply: int, interview: int, pending: int, followed: int, lost: int):
-    """投递数据统计卡片"""
-    interview_rate = round(interview / total * 100, 1) if total else 0
-    pending_rate = round(pending / total * 100, 1) if total else 0
+def stats_card(total: int, to_apply: int, in_progress: int, offered: int, lost: int, quiet: int):
+    """投递数据统计卡片（按「结果」状态机统计）
+
+    in_progress = 简历+测评+面试（还在流程里）
+    offered     = offer
+    lost        = 各轮挂（简历挂/一面挂/二面挂/三面挂）
+    quiet       = 无反馈 + 放弃
+    """
+    offered_rate = round(offered / total * 100, 1) if total else 0
+    progress_rate = round(in_progress / total * 100, 1) if total else 0
     lost_rate = round(lost / total * 100, 1) if total else 0
 
     card = {
@@ -117,19 +138,19 @@ def stats_card(total: int, to_apply: int, interview: int, pending: int, followed
             {
                 "tag": "div",
                 "fields": [
-                    {"is_short": True, "text": {"tag": "lark_md", "content": f"**面试**\n{interview} ({interview_rate}%)"}},
-                    {"is_short": True, "text": {"tag": "lark_md", "content": f"**待跟进**\n{pending} ({pending_rate}%)"}},
+                    {"is_short": True, "text": {"tag": "lark_md", "content": f"**进行中**\n{in_progress} ({progress_rate}%)"}},
+                    {"is_short": True, "text": {"tag": "lark_md", "content": f"**offer**\n{offered} ({offered_rate}%)"}},
                 ],
             },
             {
                 "tag": "div",
                 "fields": [
-                    {"is_short": True, "text": {"tag": "lark_md", "content": f"**已失效**\n{lost} ({lost_rate}%)"}},
-                    {"is_short": True, "text": {"tag": "lark_md", "content": f"**已跟进**\n{followed}"}},
+                    {"is_short": True, "text": {"tag": "lark_md", "content": f"**已挂**\n{lost} ({lost_rate}%)"}},
+                    {"is_short": True, "text": {"tag": "lark_md", "content": f"**无反馈/放弃**\n{quiet}"}},
                 ],
             },
             {"tag": "hr"},
-            {"tag": "div", "text": {"tag": "lark_md", "content": f"转化率：{interview_rate}%"}},
+            {"tag": "div", "text": {"tag": "lark_md", "content": f"offer 转化率：{offered_rate}%"}},
         ],
     }
     return card

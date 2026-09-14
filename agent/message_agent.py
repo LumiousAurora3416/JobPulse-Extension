@@ -17,9 +17,17 @@ from datetime import datetime, timezone, timedelta
 from feishu import FeishuClient
 from llm_client import LLMClient
 from cards import follow_up_card
-from config import FOLLOW_UP_HOURS
+from config import FOLLOW_UP_FIRST_DAYS, FOLLOW_UP_MAX_CARDS
 from memory import append_turn, get_history
 from profile import get_profile, upsert_facts, format_profile
+from status_rules import (
+    RESULT_OPTIONS,
+    RESULT_LOST,
+    RESULT_OFFER,
+    RESULT_QUIET,
+    is_terminal,
+    should_remind,
+)
 
 # 「企业性质」单选列的可选值。三处必须一致：这里 / 飞书列选项（init_match_tables.py）
 # / popup.html 的下拉框。飞书单选字段写入不存在的选项会直接报错，不能自动新增。
@@ -35,9 +43,9 @@ AGENT_SYSTEM_PROMPT = """你是 JobPulse 求职投递助手，帮助用户在飞
 你可以调用工具查询、录入、更新投递数据。数据存储在飞书多维表格，字段包括：
 - 公司、岗位、岗位JD、投递链接、薪资
 - 企业性质：央国企 / 民营企业 / 外企 / 其他
-- 结果：待投递 / 简历 / 面试 / 无反馈 / 简历挂
-- 提醒状态：待跟进 / 已跟进 / 已失效 / 有反馈
-- 投递天数、面试时间
+- 结果（投递进展）：待投递 / 简历 / 测评 / 面试 / 简历挂 / 一面挂 / 二面挂 / 三面挂 / offer / 无反馈 / 放弃
+- 提醒状态：公式列，由「结果」自动算出「待跟进 / 已静音」，**只读，不要尝试修改**
+- 投递天数、上次提醒日期、面试时间
 
 # 使用规则
 1. 用户想查/记/改投递数据时，先判断该调用哪个工具，把参数提取成工具要求的格式再调用。
@@ -93,9 +101,11 @@ OLD_SYSTEM_PROMPT = """你是一个求职投递助手，用户在飞书多维表
   ⚠️ 如果用户是问已有记录的状态，用 query_record，不要用 create_record
   提取参数：company（公司名）、position（岗位名）、platform（平台名，可选）、jd（岗位描述/要求文本，可选，提取职位名称后面描述职责或要求的那部分内容）
 
-- update_status：更新某家公司的投递状态
-  例如："腾讯有反馈了" "改成面试" "字节挂了" "美团有消息了"
-  提取参数：company（公司名）、new_status（面试/无反馈/简历挂/已跟进）
+- update_status：更新某家公司的投递进展（写「结果」列）
+  例如："腾讯有反馈了" "改成面试" "字节挂了" "美团二面挂了" "拿到 offer 了"
+  提取参数：company（公司名）、new_result（新进展，只能是 results 里列的那些值）
+  ⚠️ 挂要区分到轮次（简历挂/一面挂/二面挂/三面挂）；用户说"挂了"但没说哪一轮时，
+     先用一句话问清是哪一轮，不要瞎猜。
 
 - trigger_follow_up：手动推送跟进提醒卡片
   例如："推送卡片" "发送提醒" "推送跟进" "发跟进卡片" "推送"
@@ -211,18 +221,18 @@ def _query_date_count(ctx, **kwargs) -> dict:
 
 
 def _query_pending(ctx, **kwargs) -> dict:
-    """查询待跟进（无反馈）的投递。"""
+    """查询待跟进（还在流程中、会被催）的投递。"""
     client = ctx["client"]
     pending = []
     for rec in client.list_records():
-        status = client.field_value(rec, "提醒状态")
         result = client.field_value(rec, "结果")
-        if status == "待跟进" and result != "待投递":
-            pending.append({
-                "company": client.field_value(rec, "公司") or "未知",
-                "position": client.field_value(rec, "岗位") or "未知",
-                "days": client.field_value(rec, "投递天数"),
-            })
+        if not should_remind(result):
+            continue  # 终态与「待投递」都不在催办池里
+        pending.append({
+            "company": client.field_value(rec, "公司") or "未知",
+            "position": client.field_value(rec, "岗位") or "未知",
+            "days": client.field_value(rec, "投递天数"),
+        })
     return {"ok": True, "count": len(pending), "items": pending}
 
 
@@ -247,21 +257,25 @@ def _query_interviews(ctx, **kwargs) -> dict:
 
 
 def _query_statistics(ctx, **kwargs) -> dict:
-    """聚合投递统计。"""
+    """聚合投递统计（按「结果」状态机分桶，不再读已废弃的 提醒状态）。"""
     client = ctx["client"]
     records = client.list_records()
     total = len(records)
     if total == 0:
         return {"ok": True, "total": 0, "empty": True}
-    to_apply = sum(1 for r in records if client.field_value(r, "结果") == "待投递")
-    interview = sum(1 for r in records if client.field_value(r, "结果") == "面试")
-    pending = sum(1 for r in records if client.field_value(r, "提醒状态") == "待跟进")
-    followed = sum(1 for r in records if client.field_value(r, "提醒状态") == "已跟进")
-    lost = sum(1 for r in records if client.field_value(r, "提醒状态") in ("已失效", "被拒/无反馈"))
-    rate = round(interview / total * 100, 1) if total else 0
+
+    results = [client.field_value(r, "结果") for r in records]
+    to_apply = sum(1 for r in results if r == "待投递")
+    in_progress = sum(1 for r in results if should_remind(r))
+    interview = sum(1 for r in results if r == "面试")
+    offered = sum(1 for r in results if r in RESULT_OFFER)
+    lost = sum(1 for r in results if r in RESULT_LOST)
+    quiet = sum(1 for r in results if r in RESULT_QUIET)
+    rate = round(offered / total * 100, 1) if total else 0
     return {
-        "ok": True, "total": total, "to_apply": to_apply, "interview": interview,
-        "interview_rate": rate, "pending": pending, "followed": followed, "lost": lost,
+        "ok": True, "total": total, "to_apply": to_apply, "in_progress": in_progress,
+        "interview": interview, "offered": offered, "offer_rate": rate,
+        "lost": lost, "quiet": quiet,
     }
 
 
@@ -281,7 +295,6 @@ def _query_record(ctx, **kwargs) -> dict:
                 "company": c,
                 "position": client.field_value(rec, "岗位"),
                 "result": client.field_value(rec, "结果"),
-                "status": client.field_value(rec, "提醒状态"),
                 "days": client.field_value(rec, "投递天数"),
                 "interview_date": client.field_value(rec, "面试时间"),
             })
@@ -326,7 +339,9 @@ def _record_interview(ctx, **kwargs) -> dict:
         return {"ok": False, "error": f"没找到「{company}」的投递记录"}
 
     record_id = target.get("record_id", "")
-    fields = {"面试时间": time_ms, "结果": "面试", "提醒状态": "有反馈"}
+    # 只写「结果」：进面试即过程态，会继续跟进（面完还要催结果）；
+    # 提醒状态是公式列，写它会报错
+    fields = {"面试时间": time_ms, "结果": "面试"}
     ok = client.update_record(record_id, fields)
     if not ok:
         return {"ok": False, "error": "更新失败，请稍后重试"}
@@ -370,7 +385,6 @@ def _execute_create(ctx, **kwargs) -> dict:
         "岗位": position,
         "岗位JD": jd,
         "结果": "简历",
-        "提醒状态": "待跟进",
         "投递时间": today_ms,
     }
     if company_type:  # optional: only write when the user actually said it
@@ -389,16 +403,21 @@ def _execute_create(ctx, **kwargs) -> dict:
 
 
 def _execute_update(ctx, **kwargs) -> dict:
-    """更新某家公司的投递状态。"""
+    """更新某家公司的投递进展（写「结果」列）。
+
+    只写「结果」一列：「是否继续提醒」由代码从结果推导（终态即停），
+    「提醒状态」已改为公式列（只给人看，API 写不进去）。
+    旧实现把 面试/无反馈/简历挂/已跟进 混在一个枚举里全写进「提醒状态」——
+    前三者根本不是该列的合法值，写入必然失败（且整条记录更新失败）。
+    """
     client = ctx["client"]
-    valid_statuses = ("面试", "无反馈", "简历挂", "已跟进")
     company = kwargs.get("company", "") or ""
-    new_status = kwargs.get("new_status", "") or ""
+    new_result = kwargs.get("new_result", "") or ""
 
     if not company:
         return {"ok": False, "error": "没识别到是哪家公司，请说清楚公司名"}
-    if new_status not in valid_statuses:
-        return {"ok": False, "error": f"支持的状态：{'、'.join(valid_statuses)}。你说是哪一种？"}
+    if new_result not in RESULT_OPTIONS:
+        return {"ok": False, "error": f"支持的进展：{'、'.join(RESULT_OPTIONS)}。你说是哪一种？"}
 
     target = None
     for rec in client.list_records():
@@ -412,48 +431,65 @@ def _execute_update(ctx, **kwargs) -> dict:
     if not record_id:
         return {"ok": False, "error": "无法获取记录 ID"}
 
-    fields = {"提醒状态": new_status}
-    if new_status == "面试":
-        fields["结果"] = "面试"
+    fields = {"结果": new_result}
+    if is_terminal(new_result):
+        # 进终态：重置提醒计时，这条不再进候选池
+        today = datetime.now()
+        fields["上次提醒日期"] = int(
+            datetime(today.year, today.month, today.day).timestamp() * 1000
+        )
 
     ok = client.update_record(record_id, fields)
     if not ok:
         return {"ok": False, "error": "更新失败，请稍后重试"}
-    return {"ok": True, "message": f"已将「{company}」更新为「{new_status}」"}
+    return {"ok": True, "company": company, "result": new_result,
+            "terminal": is_terminal(new_result),
+            "message": f"已将「{company}」更新为「{new_result}」"
+                       + ("（已结束，不再跟进提醒）" if is_terminal(new_result) else "（继续跟进中）")}
 
 
 def _trigger_follow_up(ctx, **kwargs) -> dict:
-    """手动推送所有待跟进投递的跟进提醒卡片。"""
+    """手动推送跟进卡片。
+
+    与每日任务的区别：**忽略复催间隔**（你主动要求"现在就催"），但仍受首次投递
+    天数门槛与单次上限保护，避免一次刷出几十张卡片。
+    """
     client = ctx["client"]
     sender_id = ctx["sender_id"]
     receive_id_type = ctx["receive_id_type"]
-    threshold_days = FOLLOW_UP_HOURS / 24
 
     pending = []
     for rec in client.list_records():
         result = client.field_value(rec, "结果")
-        if result == "待投递":
-            continue
-        status = client.field_value(rec, "提醒状态")
-        if status not in ("", "待跟进"):
-            continue
+        if not should_remind(result):
+            continue  # 终态与「待投递」都不催
         days = _get_days(rec, client)
-        if days >= threshold_days:
-            company = client.field_value(rec, "公司")
-            position = client.field_value(rec, "岗位")
-            url = client.field_value(rec, "投递链接")
-            record_id = rec.get("record_id", "")
-            pending.append((company, position, days, url, record_id))
+        if days < FOLLOW_UP_FIRST_DAYS:
+            continue  # 太早跟进没意义
+        pending.append({
+            "company": client.field_value(rec, "公司"),
+            "position": client.field_value(rec, "岗位"),
+            "url": client.field_value(rec, "投递链接"),
+            "result": result,
+            "record_id": rec.get("record_id", ""),
+            "days": days,
+        })
 
     if not pending:
         return {"ok": True, "count": 0, "sent": 0}
 
+    pending = pending[:FOLLOW_UP_MAX_CARDS]
+    now = datetime.now()
+    today_ms = int(datetime(now.year, now.month, now.day).timestamp() * 1000)
+
     sent = 0
-    for company, position, days, url, record_id in pending:
-        card = follow_up_card(company, position, days, url, record_id)
+    for it in pending:
+        card = follow_up_card(it["company"], it["position"], it["days"], it["url"],
+                              it["record_id"], it["result"])
         msg_id = client.send_card(sender_id, card, receive_id_type)
         if msg_id:
-            client.update_record(record_id, {"消息ID": msg_id})
+            if it["record_id"]:
+                client.update_record(it["record_id"], {"上次提醒日期": today_ms, "消息ID": msg_id})
             sent += 1
         time.sleep(0.3)
 
@@ -575,15 +611,15 @@ TOOLS: dict[str, dict] = {
         "function": _execute_update,
         "schema": {"type": "function", "function": {
             "name": "update_status",
-            "description": "更新某家公司的投递状态（有反馈了/进面试/挂了等）",
+            "description": "更新某家公司的投递进展（进面试了 / 挂了 / 拿到 offer 等）",
             "parameters": {"type": "object",
                 "properties": {
                     "company": {"type": "string", "description": "公司名，如 腾讯"},
-                    "new_status": {"type": "string",
-                        "description": "新状态，只能是以下之一：面试 / 无反馈 / 简历挂 / 已跟进",
-                        "enum": ["面试", "无反馈", "简历挂", "已跟进"]},
+                    "new_result": {"type": "string",
+                        "description": "新的投递进展（即表格「结果」列的值）。挂要区分到轮次",
+                        "enum": RESULT_OPTIONS},
                 },
-                "required": ["company", "new_status"]},
+                "required": ["company", "new_result"]},
         }},
     },
     "trigger_follow_up": {
@@ -695,8 +731,9 @@ def _format_result(intent: str, data: dict) -> str:
         if data.get("empty"):
             return "表格为空，还没有投递记录"
         return (f"📊 投递统计\n总投递：{data['total']}\n待投递：{data['to_apply']}\n"
-                f"面试：{data['interview']}（{data['interview_rate']}%）\n待跟进：{data['pending']}\n"
-                f"已跟进：{data['followed']}\n已失效：{data['lost']}")
+                f"进行中：{data['in_progress']}（其中面试中 {data['interview']}）\n"
+                f"offer：{data['offered']}（{data['offer_rate']}%）\n"
+                f"已挂：{data['lost']}\n无结论结束（无反馈/放弃）：{data['quiet']}")
 
     if intent == "query_record":
         if not data.get("ok"):
@@ -707,8 +744,9 @@ def _format_result(intent: str, data: dict) -> str:
         lines = [f"📋 **{data.get('company')}** 的投递记录："]
         for i, it in enumerate(matches, 1):
             lines.append(f"\n  {i}. {it.get('position') or '未知岗位'}")
-            lines.append(f"     结果：{it.get('result') or '未更新'}")
-            lines.append(f"     状态：{it.get('status') or '未更新'}")
+            lines.append(f"     进展：{it.get('result') or '未更新'}"
+                         + ("（已结束）" if is_terminal(it.get("result") or "") else "（跟进中）"
+                            if should_remind(it.get("result") or "") else ""))
             if it.get("days"):
                 lines.append(f"     投递 {it['days']} 天")
             if it.get("interview_date"):
@@ -878,7 +916,7 @@ def _fallback_reply(client: FeishuClient, sender_id: str, message_text: str,
             data = _execute_create(ctx, company=params.get("company", ""), position=params.get("position", ""),
                                    platform=params.get("platform", ""), jd=params.get("jd", ""))
         elif intent == "update_status":
-            data = _execute_update(ctx, company=params.get("company", ""), new_status=params.get("new_status", ""))
+            data = _execute_update(ctx, company=params.get("company", ""), new_result=params.get("new_result", ""))
         elif intent == "trigger_follow_up":
             data = _trigger_follow_up(ctx)
         else:
