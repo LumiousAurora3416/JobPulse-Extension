@@ -29,6 +29,8 @@ JobPulse_Extension/
 │   ├── callback_server.py # 卡片按钮回调服务（Flask）
 │   ├── match_engine.py    # 岗位匹配度引擎（v1.6.0，JD+简历→评分报告）
 │   ├── match_eval/        # 匹配度评测（标注集 eval_set + run_eval.py）
+│   ├── init_match_tables.py  # 幂等建表/建列 + 列结构校验（改飞书列后跑一遍）
+│   ├── find_duplicates.py # 只读：列出「公司+岗位」重复的记录，供人工清理
 │   ├── get_openid.py      # 获取飞书 open_id 工具
 │   └── requirements.txt   # Python 依赖
 │
@@ -111,7 +113,9 @@ python agent.py --full         # 同时执行追踪 + 分析
          → h1/h2 标签提取（跳过公司名和招聘标签）
          → 公司名 DOM 选择器兜底
          → JD 正文提取（colletDetailText → extractDescReqModules）
-         → 填充弹窗表单 → 用户确认 → 写入飞书
+         → 填充弹窗表单 → 用户确认
+         → 查重（同「公司+岗位」已有记录则先提示，再点一次才强制写入）
+         → 写入飞书
 ```
 
 ### Agent 双轮驱动
