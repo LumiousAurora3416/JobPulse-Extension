@@ -6,6 +6,8 @@
   2. 若简历库为空且本地存在 resume.txt，写入 1 行种子（当前主简历）
   3. 给投递表（FEISHU_TABLE_ID）新增「匹配分」数字列（不存在才加）
   4. 给投递表新增「企业性质」单选列（不存在才加），选项见 COMPANY_TYPE_OPTIONS
+  5. 给投递表新增「上次提醒日期」日期列（不存在才加），追踪逻辑用它控复催节奏
+  6. 前置校验：「结果」列选项须与 status_rules.RESULT_OPTIONS 一致（不一致会打印差异）
 
 用法: cd agent && python init_match_tables.py
 凭据来自 agent/.env（config.py 自动加载）。不要放进 Render 部署链。
@@ -19,6 +21,7 @@ import requests
 
 sys.path.insert(0, str(Path(__file__).parent))
 from config import FEISHU_APP_ID, FEISHU_APP_SECRET, FEISHU_APP_TOKEN, FEISHU_TABLE_ID
+from status_rules import RESULT_OPTIONS, diff_with_feishu
 
 # ---- Feishu endpoints ----
 BASE = "https://open.feishu.cn/open-apis"
@@ -240,6 +243,58 @@ def ensure_company_type_column(token):
     print(f"  ✔ 投递表已新增「企业性质」单选列（{' / '.join(COMPANY_TYPE_OPTIONS)}）")
 
 
+def ensure_last_remind_date_column(token):
+    """给投递表加「上次提醒日期」日期列（只新建，不影响任何已有列）。
+
+    追踪逻辑用它控制复催节奏：推送时写今天；候选按「距上次提醒天数」降序取前 N 张。
+    """
+    existing = list_field_names(token, FEISHU_TABLE_ID)
+    if "上次提醒日期" in existing:
+        print("  · 投递表已有「上次提醒日期」列，跳过")
+        return
+    api_post(
+        token,
+        f"{BITABLE}/{FEISHU_APP_TOKEN}/tables/{FEISHU_TABLE_ID}/fields",
+        {"field_name": "上次提醒日期", "type": T_DATE},
+    )
+    print("  ✔ 投递表已新增「上次提醒日期」日期列")
+
+
+def check_result_options(token):
+    """前置校验：「结果」列选项必须与 status_rules.RESULT_OPTIONS 一致，「提醒状态」须是公式列。
+
+    写入飞书列里不存在的选项会返回 FieldConvFail 且**整条记录写入失败**（不只是这一列丢值），
+    所以每次改完列结构跑一遍这个校验，比等运行时炸出来强。
+    """
+    fields = list_field_names(token, FEISHU_TABLE_ID)
+
+    ok = True
+    if "结果" not in fields:
+        print("  ❌ 投递表没有「结果」列")
+        return False
+
+    actual = [o["name"] for o in fields["结果"].get("property", {}).get("options", [])]
+    missing, extra = diff_with_feishu(actual)
+    if missing:
+        print(f"  ❌ 「结果」列缺少选项（请先在飞书网页端补上）: {'、'.join(missing)}")
+        ok = False
+    if extra:
+        print(f"  ⚠️ 「结果」列有多余选项（代码未定义，可能是拼写/全角半角不一致）: {'、'.join(extra)}")
+    if not missing and not extra:
+        print(f"  ✔ 「结果」列 {len(actual)} 个选项与 status_rules 完全一致")
+
+    # 提醒状态应为公式列（type=20）：只给人看，代码不读不写
+    if "提醒状态" in fields:
+        ftype = fields["提醒状态"].get("type")
+        if ftype == 20:
+            print("  ✔ 「提醒状态」是公式列（type=20），代码不读不写")
+        else:
+            print(f"  ⚠️ 「提醒状态」类型 = {ftype}（期望 20=公式）。若仍是单选，代码侧不再写它，"
+                  f"该列会逐渐与实际不符")
+
+    return ok
+
+
 def main():
     print("== JobPulse 匹配度 V1 · 飞书表结构初始化 ==")
     if not (FEISHU_APP_ID and FEISHU_APP_SECRET and FEISHU_APP_TOKEN and FEISHU_TABLE_ID):
@@ -267,10 +322,15 @@ def main():
     print("— 种子简历 —")
     seed_resume(token, resume_tid, ut_type)
 
-    # 4) 投递表加「匹配分」「企业性质」列
+    # 4) 投递表加「匹配分」「企业性质」「上次提醒日期」列
     print("— 投递表加列 —")
     ensure_match_score_column(token)
     ensure_company_type_column(token)
+    ensure_last_remind_date_column(token)
+
+    # 5) 前置校验：结果列选项 / 提醒状态列类型
+    print("— 校验列结构 —")
+    check_result_options(token)
 
     print("\n== 完成 ==")
     print(f"简历库 table_id = {resume_tid}")

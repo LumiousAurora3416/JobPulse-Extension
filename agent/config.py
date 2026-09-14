@@ -42,8 +42,14 @@ LLM_MODEL = env("LLM_MODEL", "gpt-4o")                           # 模型名
 # LLM_MODEL = "claude-sonnet-4-20250514"
 
 # ========== Agent 行为配置 ==========
-# 投递超过多少天触发提醒（小时）
+# ⚠️ 已废弃（v1.9.0 起改用下方三项）：投递超过多少小时触发提醒。
+# 暂时保留以免破坏现有 import，追踪逻辑切换完成后删除。
 FOLLOW_UP_HOURS = 72
+
+# 跟进提醒节奏（v1.9.0「结果」状态机重构）
+FOLLOW_UP_FIRST_DAYS = int(env("FOLLOW_UP_FIRST_DAYS", "5"))        # 首次提醒：投递后第几天
+FOLLOW_UP_INTERVAL_DAYS = int(env("FOLLOW_UP_INTERVAL_DAYS", "7"))  # 之后每几天复催一次
+FOLLOW_UP_MAX_CARDS = int(env("FOLLOW_UP_MAX_CARDS", "10"))         # 单次运行最多推几张卡片
 
 # 是否启用 LLM 归因分析
 ENABLE_ANALYSIS = True
