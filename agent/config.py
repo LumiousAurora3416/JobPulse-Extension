@@ -24,7 +24,8 @@ def env(key, default=""):
 FEISHU_APP_ID = env("FEISHU_APP_ID")           # 飞书自建应用 App ID
 FEISHU_APP_SECRET = env("FEISHU_APP_SECRET")   # 飞书自建应用 App Secret
 FEISHU_APP_TOKEN = env("FEISHU_APP_TOKEN")     # 多维表格 Base Token
-FEISHU_TABLE_ID = env("FEISHU_TABLE_ID")       # 多维表格 Table ID
+FEISHU_TABLE_ID = env("FEISHU_TABLE_ID")       # 多维表格 Table ID（投递表）
+FEISHU_TRACK_TABLE_ID = env("FEISHU_TRACK_TABLE_ID")  # 插件埋点表 Table ID（留空则丢弃埋点）
 
 # 飞书用户/群组 ID（发消息给谁）
 # 可在飞书 Open API 调试台获取，或直接用 Webhook 地址

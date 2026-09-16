@@ -39,8 +39,10 @@ class FeishuClient:
     TOKEN_URL = "https://open.feishu.cn/open-apis/auth/v3/tenant_access_token/internal"
     BITABLE_URL = "https://open.feishu.cn/open-apis/bitable/v1/apps"
 
-    def __init__(self):
+    def __init__(self, table_id: str = ""):
         self._session = _session()
+        # 默认写投递表；埋点表等其它表用 table_id 覆盖（当前仅 create_record 使用）
+        self._table_id = table_id or FEISHU_TABLE_ID
         # Use shared module-level token cache
         self._token = _shared_token
         self._token_expires_at = _shared_token_expires_at
@@ -127,8 +129,8 @@ class FeishuClient:
         return True
 
     def create_record(self, fields: dict) -> str:
-        """创建新记录，返回 record_id"""
-        url = f"{self.BITABLE_URL}/{FEISHU_APP_TOKEN}/tables/{FEISHU_TABLE_ID}/records"
+        """创建新记录，返回 record_id（写入 self._table_id，默认投递表）"""
+        url = f"{self.BITABLE_URL}/{FEISHU_APP_TOKEN}/tables/{self._table_id}/records"
         resp = self._session.post(url, headers=self._headers(), json={"fields": fields}, timeout=10)
         data = resp.json()
         if data.get("code") != 0:

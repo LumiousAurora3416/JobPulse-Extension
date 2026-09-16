@@ -13,6 +13,7 @@ import json
 import os
 import sys
 import threading
+import time
 from datetime import datetime
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
@@ -91,6 +92,71 @@ def api_match():
         import traceback
         traceback.print_exc()
         return json_resp({"code": 500, "msg": f"评分失败: {e}"}, 500)
+
+
+# ---- 插件匿名埋点（v1.10.0）----
+# 事件白名单必须与 init_match_tables.TRACK_EVENT_OPTIONS 保持一致。
+# 刻意不 import 那个初始化脚本：本文件是线上生产服务，不该依赖一次性建表脚本。
+TRACK_EVENTS = {
+    "install",
+    "popup_open",
+    "extract_ok",
+    "extract_fail",
+    "write_ok",
+    "match_run",
+}
+TRACK_FIELD_MAX = 200
+
+
+def _clip(value, limit: int = TRACK_FIELD_MAX) -> str:
+    """截断 + 去掉换行：埋点表不该被塞进任意长文本"""
+    return str(value or "")[:limit].replace("\n", " ").replace("\r", " ").strip()
+
+
+def _write_track(payload: dict) -> None:
+    """把一次埋点写进飞书埋点表。
+
+    只取白名单字段重建记录，不把客户端原始 payload 直接落表——这是继
+    「埋点请求不带用户飞书凭证」之后对用户数据的第二道闸。
+    """
+    from config import FEISHU_TRACK_TABLE_ID
+
+    if not FEISHU_TRACK_TABLE_ID:
+        print("  ⚠️ 未配置 FEISHU_TRACK_TABLE_ID，埋点丢弃")
+        return
+
+    event = _clip(payload.get("event"), 40)
+    if event not in TRACK_EVENTS:
+        print(f"  ⚠️ 埋点事件不在白名单，丢弃: {event!r}")
+        return
+
+    fields = {
+        "事件": event,
+        "匿名ID": _clip(payload.get("anon_id"), 64),
+        "平台": _clip(payload.get("platform"), 120),
+        "详情": _clip(payload.get("detail")),
+        "插件版本": _clip(payload.get("version"), 20),
+        # 用服务端时间而非客户端上报值：客户端时钟不可信
+        "发生时间": int(time.time() * 1000),
+    }
+    FeishuClient(table_id=FEISHU_TRACK_TABLE_ID).create_record(fields)
+
+
+@app.route("/api/track", methods=["POST", "OPTIONS"])
+def api_track():
+    """插件匿名使用埋点。
+
+    刻意不做鉴权（公开遥测端点，且请求里不含任何飞书凭证），并且无论成功
+    失败一律返回 200：插件侧是 fire-and-forget，埋点失败绝不能变成用户可见的错误。
+    """
+    if request.method == "OPTIONS":
+        return json_resp({})  # CORS 预检
+    payload = request.get_json(force=True, silent=True) or {}
+    try:
+        _write_track(payload)
+    except Exception as e:
+        print(f"  ⚠️ 埋点写入失败（已忽略）: {e}")
+    return json_resp({"code": 0})
 
 
 @app.route("/")
