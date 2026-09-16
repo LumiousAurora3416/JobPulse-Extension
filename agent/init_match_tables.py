@@ -8,6 +8,7 @@
   4. 给投递表新增「企业性质」单选列（不存在才加），选项见 COMPANY_TYPE_OPTIONS
   5. 给投递表新增「上次提醒日期」日期列（不存在才加），追踪逻辑用它控复催节奏
   6. 前置校验：「结果」列选项须与 status_rules.RESULT_OPTIONS 一致（不一致会打印差异）
+  7. 创建「插件埋点」表（若已存在则复用），补齐字段：事件/匿名ID/平台/详情/插件版本/发生时间
 
 用法: cd agent && python init_match_tables.py
 凭据来自 agent/.env（config.py 自动加载）。不要放进 Render 部署链。
@@ -68,6 +69,32 @@ RESUME_FIELDS = [
     {"field_name": "更新时间", "type": T_LASTMOD},
 ]
 
+# ---- 插件埋点表（v1.10.0）----
+# 事件枚举必须与 popup.js 的 track() 调用点一一对应。
+# 单选列写入未定义的选项会 FieldConvFail 且整条记录失败，所以这里一次带全。
+TRACK_TABLE_NAME = "插件埋点"
+TRACK_VIEW_NAME = "埋点视图"
+TRACK_EVENT_OPTIONS = [
+    "install",       # 首次运行（无 background worker，用首次打开弹窗近似）
+    "popup_open",    # 每次打开弹窗
+    "extract_ok",    # 页面抓取成功
+    "extract_fail",  # 页面抓取失败
+    "write_ok",      # 写入飞书成功
+    "match_run",     # 调用匹配度接口
+]
+TRACK_FIELDS = [
+    {
+        "field_name": "事件",
+        "type": T_SINGLE,
+        "property": {"options": [{"name": n} for n in TRACK_EVENT_OPTIONS]},
+    },
+    {"field_name": "匿名ID", "type": T_TEXT},      # 浏览器实例级 UUID，本地生成
+    {"field_name": "平台", "type": T_TEXT},        # 仅 hostname，不含 URL / 岗位名
+    {"field_name": "详情", "type": T_TEXT},        # 失败原因等，无敏感内容
+    {"field_name": "插件版本", "type": T_TEXT},
+    {"field_name": "发生时间", "type": T_DATE},    # 毫秒时间戳
+]
+
 
 def api_get(token, url):
     r = requests.get(url, headers={"Authorization": f"Bearer {token}"}, timeout=15)
@@ -117,22 +144,29 @@ def list_table_names(token):
     return {it["name"]: it["table_id"] for it in items}
 
 
-def find_or_create_resume_table(token, tables):
-    if RESUME_TABLE_NAME in tables:
-        print(f"  ✔ 已存在「{RESUME_TABLE_NAME}」表: {tables[RESUME_TABLE_NAME]}")
-        return tables[RESUME_TABLE_NAME]
-    # 建表 body 需 default_view_name + 至少 1 个字段；其余字段随后用 ensure 补齐
-    body = {
-        "table": {
-            "name": RESUME_TABLE_NAME,
-            "default_view_name": "简历库视图",
-            "fields": [RESUME_FIELDS[0]],  # 简历名称
-        }
-    }
+def find_or_create_table(token, tables, name, view_name, first_field):
+    """按表名查找；不存在才建表，返回 table_id。
+
+    建表 body 必须带 default_view_name + 至少 1 个字段，其余字段随后用 ensure_field 补齐。
+    """
+    if name in tables:
+        print(f"  ✔ 已存在「{name}」表: {tables[name]}")
+        return tables[name]
+    body = {"table": {"name": name, "default_view_name": view_name, "fields": [first_field]}}
     data = api_post(token, f"{BITABLE}/{FEISHU_APP_TOKEN}/tables", body)
     tid = data["data"]["table_id"]
-    print(f"  ✔ 已创建「{RESUME_TABLE_NAME}」表: {tid}")
+    print(f"  ✔ 已创建「{name}」表: {tid}")
     return tid
+
+
+def find_or_create_resume_table(token, tables):
+    return find_or_create_table(token, tables, RESUME_TABLE_NAME, "简历库视图", RESUME_FIELDS[0])
+
+
+def find_or_create_track_table(token, tables):
+    return find_or_create_table(
+        token, tables, TRACK_TABLE_NAME, TRACK_VIEW_NAME, TRACK_FIELDS[0]
+    )
 
 
 def list_field_names(token, table_id):
@@ -349,9 +383,17 @@ def main():
     print("— 校验列结构 —")
     check_result_options(token)
 
+    # 6) 插件埋点表（新建或复用），补齐字段
+    print("— 插件埋点表 —")
+    track_tid = find_or_create_track_table(token, tables)
+    for spec in TRACK_FIELDS[1:]:
+        ensure_field(token, track_tid, spec)
+
     print("\n== 完成 ==")
     print(f"简历库 table_id = {resume_tid}")
     print("（插件设置页「简历库 Table ID」可留空，会自动按表名查找）")
+    print(f"埋点表 table_id = {track_tid}")
+    print("（下一步要用：填进 Render 环境变量 FEISHU_TRACK_TABLE_ID）")
 
 
 if __name__ == "__main__":
