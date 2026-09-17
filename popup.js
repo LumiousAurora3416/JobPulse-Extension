@@ -13,6 +13,70 @@ let duplicateConfirmed = false; // 查重命中后，用户再点一次「写入
 const TOKEN_URL =
   "https://open.feishu.cn/open-apis/auth/v3/tenant_access_token/internal";
 
+/* ================= 匿名使用埋点（v1.10.0） ================= */
+
+// 固定发往开发者后端，刻意不复用设置页的 matchBaseUrl：
+// 埋点是「回传给开发者」的，不该被用户的匹配后端配置影响。
+const TRACK_BASE = MATCH_DEFAULT_BASE;
+const TRACK_ANON_KEY = "anonId";
+const TRACK_INSTALL_KEY = "installedAt";
+let ANON_ID = null;
+
+// 取（或首次生成）匿名 ID，存 chrome.storage.local。
+// 口径是「浏览器实例」而非「人」：换电脑 / 重装扩展都会算作新用户。
+function getAnonId() {
+  return new Promise(function (resolve) {
+    if (ANON_ID) return resolve(ANON_ID);
+    chrome.storage.local.get([TRACK_ANON_KEY], function (r) {
+      var id = r[TRACK_ANON_KEY];
+      if (!id) {
+        id =
+          "u_" +
+          Math.random().toString(36).slice(2, 10) +
+          Date.now().toString(36);
+        chrome.storage.local.set({ [TRACK_ANON_KEY]: id });
+      }
+      ANON_ID = id;
+      resolve(id);
+    });
+  });
+}
+
+// 从 URL 取 hostname；只上报域名，绝不上报完整 URL（路径里可能带岗位 id）
+function hostOf(url) {
+  try {
+    return new URL(url).hostname;
+  } catch (e) {
+    return "";
+  }
+}
+
+// Fire-and-forget：调用方永远不要 await 它。
+// Render 免费实例冷启动可达数十秒，为了一个数据点把弹窗卡住是本末倒置；
+// 失败也一律静默——埋点出问题绝不能变成用户可见的错误。
+function track(event, extra) {
+  getAnonId()
+    .then(function (id) {
+      var body = Object.assign(
+        {
+          event: event,
+          anon_id: id,
+          version: chrome.runtime.getManifest().version,
+          platform: "",
+          detail: "",
+        },
+        extra || {}
+      );
+      return fetch(TRACK_BASE + "/api/track", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(body),
+        keepalive: true,
+      });
+    })
+    .catch(function () {});
+}
+
 function recordUrl() {
   return `https://open.feishu.cn/open-apis/bitable/v1/apps/${FEISHU.appToken}/tables/${FEISHU.tableId}/records`;
 }
@@ -717,6 +781,7 @@ async function fillFromPage() {
     jdEl.value = data.jd || "";
     if (salaryEl) salaryEl.value = data.salary || "";
     hideMessage();
+    track("extract_ok", { platform: hostOf(u) });
     if (
       !data.position ||
       /校园招聘|Campus Recruitment/i.test(data.position)
@@ -727,6 +792,10 @@ async function fillFromPage() {
       );
     }
   } catch (e) {
+    track("extract_fail", {
+      platform: hostOf(u),
+      detail: e.message || String(e),
+    });
     showMessage(
       "页面解析失败，可手动填写：" + (e.message || String(e)),
       false
@@ -1021,6 +1090,9 @@ async function runMatch() {
     const resumeBody = await getResumeBody(token, recordId);
     const report = await callMatchApi(jd, resumeBody);
     renderMatchReport(report);
+    track("match_run", {
+      platform: hostOf(document.getElementById("applyUrl").value.trim()),
+    });
   } catch (e) {
     box.innerHTML =
       '<div class="match-error">匹配失败：' +
@@ -1063,6 +1135,16 @@ function openSetup() {
 }
 
 document.addEventListener("DOMContentLoaded", async function () {
+  // 埋点在 loadConfig 之前上报：这样「装了但还没配置就关掉」也能被记到。
+  // 没有 background worker，onInstalled 监听不到，用「首次打开弹窗」近似「安装」。
+  chrome.storage.local.get([TRACK_INSTALL_KEY], function (r) {
+    if (!r[TRACK_INSTALL_KEY]) {
+      chrome.storage.local.set({ [TRACK_INSTALL_KEY]: Date.now() });
+      track("install");
+    }
+    track("popup_open");
+  });
+
   var hasConfig = await loadConfig();
   if (!hasConfig) {
     document.getElementById("mainView").style.display = "none";
@@ -1167,6 +1249,7 @@ document.addEventListener("DOMContentLoaded", async function () {
       await createBitableRecord(token, fields);
       duplicateConfirmed = false;
       showMessage("已同步到飞书多维表格", true);
+      track("write_ok", { platform: hostOf(applyUrl) });
     } catch (e) {
       showMessage(e.message || String(e), false);
     } finally {
