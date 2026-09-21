@@ -7,6 +7,9 @@ let FEISHU = null;
 const MATCH_DEFAULT_BASE = "https://jobpulse-extension.onrender.com";
 const JD_SEND_MAX = 2000; // 对齐引擎 MATCH_MAX_JD_CHARS
 const RESUME_SEND_MAX = 4000; // 对齐引擎 MATCH_MAX_RESUME_CHARS
+// Nested timeout budget: LLM 75s < gunicorn 90s < Cloudflare 100s < 这里 95s.
+// Client must be the outermost layer, or it aborts before the server answers.
+const MATCH_TIMEOUT_MS = 95000;
 let RESUME_TABLE_ID_CACHE = null; // 自动查找到的简历库 table_id 缓存
 let currentMatch = null; // 最近一次匹配报告（供直投时写入「匹配分」）
 let duplicateConfirmed = false; // 查重命中后，用户再点一次「写入飞书」才置真（两步确认）
@@ -926,11 +929,13 @@ async function getResumeBody(token, recordId) {
   return body;
 }
 
-// Call backend /api/match with jd + resume text. 60s timeout to absorb Render cold start + LLM variance.
+// Call backend /api/match with jd + resume text.
+// Timeout must outlast the server's own limits (see MATCH_TIMEOUT_MS above), so we
+// only abort when the server is truly gone -- not while it is still legitimately working.
 async function callMatchApi(jdText, resumeText) {
   const base = (FEISHU.matchBaseUrl || MATCH_DEFAULT_BASE).replace(/\/+$/, "");
   const ctrl = new AbortController();
-  const timer = setTimeout(() => ctrl.abort(), 60000);
+  const timer = setTimeout(() => ctrl.abort(), MATCH_TIMEOUT_MS);
   const headers = { "Content-Type": "application/json" };
   if (FEISHU.matchToken) headers["X-Match-Token"] = FEISHU.matchToken;
   let res;
@@ -947,7 +952,7 @@ async function callMatchApi(jdText, resumeText) {
   } catch (e) {
     clearTimeout(timer);
     if (e && e.name === "AbortError") {
-      throw new Error("匹配超时（>30s），请稍后重试");
+      throw new Error("匹配超时（>95s），后端可能正在冷启动，请稍后重试");
     }
     throw new Error(
       "无法连接匹配后端：请检查网络、后端是否在线，以及扩展已重新加载且 manifest 包含该域名 host 权限。"
@@ -960,7 +965,16 @@ async function callMatchApi(jdText, resumeText) {
   try {
     data = JSON.parse(text);
   } catch (_) {
-    throw new Error(`匹配后端响应异常 HTTP ${res.status}`);
+    // A non-JSON body means the reply did not come from our handler: either the
+    // gunicorn worker was killed mid-request (empty body), or a proxy returned an
+    // HTML error page. Show what we actually got so the next failure is diagnosable.
+    const snippet = (text || "").replace(/\s+/g, " ").trim().slice(0, 200);
+    if (!snippet) {
+      throw new Error(
+        `匹配后端响应异常 HTTP ${res.status}（响应为空，通常是后端计算超时被中断，请重试）`
+      );
+    }
+    throw new Error(`匹配后端响应异常 HTTP ${res.status}：${snippet}`);
   }
   if (res.status === 401) {
     throw new Error(

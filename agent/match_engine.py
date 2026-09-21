@@ -215,6 +215,13 @@ def _extract_json(text: str) -> dict:
     raise RuntimeError(f"LLM 返回无法解析的 JSON: {text[:300]}...")
 
 
+# Inner timeout for the LLM call. Must stay BELOW gunicorn's worker timeout
+# (see agent/gunicorn.conf.py: timeout = 90), otherwise gunicorn kills the worker
+# mid-call and the client gets a 500 with an EMPTY body -- which the extension can
+# only report as "响应异常 HTTP 500". Nested budget: 75 < 90 (gunicorn) < 100 (CF).
+LLM_REQUEST_TIMEOUT = 75
+
+
 def _call_llm(system_prompt: str, user_message: str) -> dict:
     """② LLM 一次调用，拿结构化评分报告。
 
@@ -250,7 +257,7 @@ def _call_llm(system_prompt: str, user_message: str) -> dict:
                 "Content-Type": "application/json",
             },
             json=body,
-            timeout=60,
+            timeout=LLM_REQUEST_TIMEOUT,
         )
         data = resp.json()
         if "error" in data:
@@ -351,6 +358,16 @@ def _post_process(report: dict, algorithm: dict,
 
     report["algorithm_check"] = algorithm
     return report
+
+
+def warmup() -> None:
+    """Pre-build jieba's dictionary outside the request path.
+
+    jieba builds its prefix dict lazily on first use (~3.7s observed on Render).
+    gunicorn's post_fork hook calls this at worker startup, so that cost lands on
+    boot instead of on the user's first -- cold-start -- match request.
+    """
+    keyword_check("预热", "预热")
 
 
 def evaluate(jd_text: str, resume_text: str, config: dict = None) -> dict:
