@@ -26,7 +26,8 @@ JobPulse_Extension/
 │   ├── cards.py           # 消息卡片模板（按钮按结果动态生成）
 │   ├── config.py          # 配置（支持环境变量覆盖）
 │   ├── llm_client.py      # LLM 客户端（OpenAI / Claude）
-│   ├── callback_server.py # 卡片按钮回调服务（Flask）
+│   ├── callback_server.py # 卡片按钮回调服务（Flask，兼 /api/match 匹配度接口）
+│   ├── gunicorn.conf.py   # 生产 gunicorn 配置：worker 超时 90s + 启动预热 jieba（v1.10.1）
 │   ├── match_engine.py    # 岗位匹配度引擎（v1.6.0，JD+简历→评分报告）
 │   ├── match_eval/        # 匹配度评测（标注集 eval_set + run_eval.py）
 │   ├── init_match_tables.py  # 幂等建表/建列 + 列结构校验（改飞书列后跑一遍）
@@ -266,7 +267,16 @@ PROJECT_REVIEW.md 本质是**你的面试作品集级复盘文档**，受众是�
 - 借鉴开源方案必须读源码：ResumeIQ 宣称"15 组标注 MAE 5.0"但仓库实际只有 3 组；@resurank 英文 tokenizer 对中文直接报废
 - 算法核对层只证伪"分数虚高"：词面不重叠但语义很配是盲区，靠 LLM 语义兜底
 - 插件直调自建后端要过两层：manifest `host_permissions` 放行域名 + 后端 CORS `Access-Control-Allow-Headers` 含自定义头（如 X-Match-Token），缺一浏览器都拦
-- Render 免费实例闲置约 15 分钟休眠、冷启动可达数十秒：/api/match 前端超时设 60s；manifest/JS 改动后必须 reload 扩展才生效
+- Render 免费实例闲置约 15 分钟休眠、冷启动可达数十秒；manifest/JS 改动后必须 reload 扩展才生效
+
+### 部署与超时（Render / gunicorn）
+- **超时必须有层级意识：内层永远小于外层**。只要内层比外层长，外层就会先开火。而外层（gunicorn）是**靠 kill 进程**超时的——内层所有精心写的 `try/except` 会**一行都执行不到**，客户端拿到空 body 的 500，前端 `JSON.parse("")` 失败后只能报一句「响应异常 HTTP 500」，完全无法定位
+- 当前预算（v1.10.1 起）：**LLM 75s < gunicorn 90s < Cloudflare 100s，插件 fetch 95s 兜最外层**。改任意一层都必须同步检查其余三层
+- **`agent/gunicorn.conf.py` 会被自动加载**：gunicorn 默认读取工作目录下的这个文件，而 Render 启动命令是 `cd agent && gunicorn callback_server:app ...`，正好命中——**调 worker 超时不用去 Render 后台改配置**（命令行 `--bind` 优先级更高，不受影响）
+- **慢接口必须在启动时预热**：`match_engine` 是首次请求才 import 的，jieba 词典更是首次使用时才构建（Render 上实测 3.7s）。这两笔账全压在**冷启动后的第一次调用**上，而那恰恰是最容易超时的一次。改用 gunicorn `post_fork` 钩子在 worker 启动时预热（预热失败只 warning，绝不能拖垮服务启动）
+- **判断"是不是冷启动问题"看日志的成对性**：每次 500 后面紧跟一次 200 重试，就是冷启动特征；真正的业务异常不会这样成对出现
+- ⚠️ 想用定时 ping 保活来消灭冷启动，先算额度：Render 免费版 750 小时/月，常驻一个服务约 730 小时，**几乎用满、没有余量**
+- 排查后端问题优先看 **Render 日志**（Dashboard → Logs，或 MCP `list_logs`）；注意日志**只能查最近 30 天**。REST/MCP 接口**能写环境变量但读不了**——要看 `LLM_MODEL` 之类的值只能去 Dashboard → Environment
 
 ### Git & 安全
 - **git filter-branch --tree-filter 会丢失 untracked 文件**：运行前确认所有 untracked 文件已备份或提交。PROJECT_REVIEW.md 就是实际教训
