@@ -69,10 +69,16 @@ FOLLOW_UP_FIRST_DAYS = int(env("FOLLOW_UP_FIRST_DAYS", "5"))        # 首次提�
 FOLLOW_UP_INTERVAL_DAYS = int(env("FOLLOW_UP_INTERVAL_DAYS", "7"))  # 之后每几天复催一次
 FOLLOW_UP_MAX_CARDS = int(env("FOLLOW_UP_MAX_CARDS", "10"))         # 单次运行最多推几张卡片
 
-# 是否启用 LLM 归因分析
-ENABLE_ANALYSIS = True
+# 是否启用 LLM 归因分析（v1.11.1 起默认关闭）
+# 关闭原因：① 名为「每周」，实际是每次 --full 都跑，而 --full 每天 9:00 跑一次
+#   （下面的 ANALYSIS_INTERVAL_DAYS 定义了但全项目从未引用），等于每天推一张
+#   高度雷同的卡片；② 内容价值有限——只看前 20 个岗位、每个只取 JD 前 300 字，
+#   输出是泛泛的简历建议，且没有把「匹配分」和「结果」交叉起来做真正的归因。
+# 手动跑仍然可用：python agent.py --analyze
+ENABLE_ANALYSIS = env("ENABLE_ANALYSIS", "false").lower() == "true"
 
-# 归因分析执行间隔（单位：天；0 = 每次运行都执行）
+# ⚠️ 已废弃：定义了但代码里从未使用（上面 ENABLE_ANALYSIS 的注释有说明）。
+# 保留仅为避免破坏已有 import，接入真正的周期间隔后再启用。
 ANALYSIS_INTERVAL_DAYS = 7
 
 # ========== 岗位匹配度（--match） ==========
