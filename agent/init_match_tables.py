@@ -9,6 +9,8 @@
   5. 给投递表新增「上次提醒日期」日期列（不存在才加），追踪逻辑用它控复催节奏
   6. 前置校验：「结果」列选项须与 status_rules.RESULT_OPTIONS 一致（不一致会打印差异）
   7. 创建「插件埋点」表（若已存在则复用），补齐字段：事件/匿名ID/平台/详情/插件版本/发生时间
+  8. 创建「待办」表（若已存在则复用），补齐字段：事项/公司/岗位/待办类型/截止时间/行动链接/
+     邮件发送时间/已完成/邮件主题/邮件ID。由邮件监控 mail_watch.py 写入
 
 用法: cd agent && python init_match_tables.py
 凭据来自 agent/.env（config.py 自动加载）。不要放进 Render 部署链。
@@ -41,6 +43,8 @@ T_TEXT = 1        # 多行文本（记录值传 string）
 T_NUMBER = 2      # 数字（记录值传 number）
 T_SINGLE = 3      # 单选（记录值传「选项名字符串」）
 T_DATE = 5        # 日期（记录值传毫秒时间戳）
+T_CHECKBOX = 7    # 复选框（记录值传 true / false）
+T_LINK = 15       # 超链接（记录值传 {"link": url, "text": 显示文字}）
 T_LASTMOD = 1002  # 最后更新时间（自动字段，不可手动写值）
 
 # 投递表「企业性质」单选列的可选值（与 popup.html 的下拉框、message_agent 的工具 enum 保持一致）
@@ -93,6 +97,32 @@ TRACK_FIELDS = [
     {"field_name": "详情", "type": T_TEXT},        # 失败原因等，无敏感内容
     {"field_name": "插件版本", "type": T_TEXT},
     {"field_name": "发生时间", "type": T_DATE},    # 毫秒时间戳
+]
+
+# ---- 待办表（邮件监控）----
+# 入表判据是「需要你做一个动作 + 有时限」，不是「是不是求职邮件」。
+# 投递回执 / 拒信 / 招聘广告都不进（实测这三类占了疑似求职邮件的大头）。
+TODO_TABLE_NAME = "待办"
+TODO_VIEW_NAME = "待办视图"
+# 单选列写入未定义的选项会 FieldConvFail 且整条记录失败，所以这里一次带全
+TODO_TYPE_OPTIONS = ["测评", "笔试", "面试", "完善资料", "其他"]
+
+TODO_FIELDS = [
+    {"field_name": "事项", "type": T_TEXT},        # 主字段：人话描述这件事要干嘛
+    {"field_name": "公司", "type": T_TEXT},
+    {"field_name": "岗位", "type": T_TEXT},
+    {
+        "field_name": "待办类型",
+        "type": T_SINGLE,
+        "property": {"options": [{"name": n} for n in TODO_TYPE_OPTIONS]},
+    },
+    {"field_name": "截止时间", "type": T_DATE},      # 可空；没有期限的排在最后
+    # 测评/笔试/面试入口。注意：这是免密登录凭据，别把本表分享给他人
+    {"field_name": "行动链接", "type": T_LINK},
+    {"field_name": "邮件发送时间", "type": T_DATE},
+    {"field_name": "已完成", "type": T_CHECKBOX},
+    {"field_name": "邮件主题", "type": T_TEXT},      # 溯源：拿它回邮箱搜原邮件
+    {"field_name": "邮件ID", "type": T_TEXT},        # Message-ID，去重键
 ]
 
 
@@ -166,6 +196,12 @@ def find_or_create_resume_table(token, tables):
 def find_or_create_track_table(token, tables):
     return find_or_create_table(
         token, tables, TRACK_TABLE_NAME, TRACK_VIEW_NAME, TRACK_FIELDS[0]
+    )
+
+
+def find_or_create_todo_table(token, tables):
+    return find_or_create_table(
+        token, tables, TODO_TABLE_NAME, TODO_VIEW_NAME, TODO_FIELDS[0]
     )
 
 
@@ -389,11 +425,19 @@ def main():
     for spec in TRACK_FIELDS[1:]:
         ensure_field(token, track_tid, spec)
 
+    # 7) 待办表（新建或复用），补齐字段
+    print("— 待办表 —")
+    todo_tid = find_or_create_todo_table(token, tables)
+    for spec in TODO_FIELDS[1:]:
+        ensure_field(token, todo_tid, spec)
+
     print("\n== 完成 ==")
     print(f"简历库 table_id = {resume_tid}")
     print("（插件设置页「简历库 Table ID」可留空，会自动按表名查找）")
     print(f"埋点表 table_id = {track_tid}")
     print("（下一步要用：填进 Render 环境变量 FEISHU_TRACK_TABLE_ID）")
+    print(f"待办表 table_id = {todo_tid}")
+    print("（下一步要用：填进 config 的 FEISHU_TODO_TABLE_ID）")
 
 
 if __name__ == "__main__":
