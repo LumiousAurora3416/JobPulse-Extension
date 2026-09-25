@@ -16,8 +16,8 @@ from datetime import datetime, timezone, timedelta
 
 from feishu import FeishuClient
 from llm_client import LLMClient
-from cards import follow_up_card
-from config import FOLLOW_UP_FIRST_DAYS, FOLLOW_UP_MAX_CARDS
+from cards import follow_up_card, todo_list_card
+from config import FEISHU_TODO_TABLE_ID, FOLLOW_UP_FIRST_DAYS, FOLLOW_UP_MAX_CARDS
 from memory import append_turn, get_history
 from profile import get_profile, upsert_facts, format_profile
 from status_rules import (
@@ -91,6 +91,10 @@ OLD_SYSTEM_PROMPT = """你是一个求职投递助手，用户在飞书多维表
 - query_record：查某家公司的投递进度（该公司已存在表格中）
   例如："我投的字节怎么样了" "腾讯那个岗位有消息吗" "阿里云现在什么情况"
   提取参数：company（公司名，必填）、position（岗位名，可选）
+
+- query_todos：推送「待办清单」卡片 —— 邮箱收到的测评/笔试/面试通知，含截止时间和入口链接
+  例如："今日待办" "有什么待办" "待办清单" "有什么要做的" "测评还没做" "哪些要截止了"
+  ⚠️ 这是关于「邮箱通知里要做的事」，与 query_pending（投递没反馈要跟进）不是一回事
 
 - record_interview：记录或更新面试时间
   例如："字节周三下午两点面试" "腾讯后天上午十点面试" "帮我记下面试时间"
@@ -299,6 +303,35 @@ def _query_record(ctx, **kwargs) -> dict:
                 "interview_date": client.field_value(rec, "面试时间"),
             })
     return {"ok": True, "company": company, "position_hint": position, "total": len(matches), "matches": matches}
+
+
+def _query_todos(ctx, **kwargs) -> dict:
+    """推送待办清单卡片（邮件监控写入的「待办」表）。
+
+    刻意直接发卡片而不是返回文本：待办的价值在「点一下就能去做」，
+    行动链接必须做成按钮，纯文字回复给不了。
+    """
+    client = FeishuClient(table_id=FEISHU_TODO_TABLE_ID)
+    todos = []
+    for rec in client.list_records():
+        # 复选框未勾选时 API 返回布尔 False，而 field_value() 会把它转成字符串
+        # "False" —— 那是真值，直接用会把所有记录都误判成「已完成」而全部跳过。
+        # 所以这里读原始值，只认真正的 True。
+        if rec.get("fields", {}).get("已完成") is True:
+            continue                      # 勾过的就不再出现
+        deadline = client.field_value(rec, "截止时间")
+        todos.append({
+            "company": client.field_value(rec, "公司") or "",
+            "position": client.field_value(rec, "岗位") or "",
+            "type": client.field_value(rec, "待办类型") or "",
+            "summary": client.field_value(rec, "事项") or "",
+            "deadline": int(deadline) if deadline else None,
+            "url": client.field_value(rec, "行动链接") or "",
+        })
+
+    card = todo_list_card(todos)
+    msg_id = client.send_card(ctx["sender_id"], card, ctx["receive_id_type"])
+    return {"ok": True, "count": len(todos), "sent": bool(msg_id)}
 
 
 def _record_interview(ctx, **kwargs) -> dict:
@@ -573,6 +606,15 @@ TOOLS: dict[str, dict] = {
                     "position": {"type": "string", "description": "岗位名，可选"},
                 },
                 "required": ["company"]},
+        }},
+    },
+    "query_todos": {
+        "function": _query_todos,
+        "schema": {"type": "function", "function": {
+            "name": "query_todos",
+            "description": "推送待办清单卡片：邮箱里收到的测评/笔试/面试通知，"
+                           "含截止时间、倒计时和入口链接",
+            "parameters": {"type": "object", "properties": {}, "required": []},
         }},
     },
     "record_interview": {

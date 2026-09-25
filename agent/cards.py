@@ -1,6 +1,11 @@
 """飞书消息卡片模板"""
 
+from datetime import datetime, timezone, timedelta
+
 from status_rules import card_actions_for
+
+CST = timezone(timedelta(hours=8))
+DAY_MS = 86400000
 
 
 def _result_icon(result: str) -> str:
@@ -171,6 +176,125 @@ def interview_reminder_card(company: str, position: str, interview_date: str, lo
         ],
     }
     return card
+
+
+# ── 待办清单（邮件监控写入的「待办」表） ──────────────────────
+
+TODO_TYPE_ICONS = {
+    "测评": "📝",
+    "笔试": "✍️",
+    "面试": "🎤",
+    "完善资料": "📄",
+    "其他": "🔹",
+}
+
+TODO_BUTTON_LABELS = {
+    "测评": "🚀 去做测评",
+    "笔试": "🚀 去做笔试",
+    "面试": "🎤 参加面试",
+    "完善资料": "📄 去填写",
+    "其他": "🔗 打开",
+}
+
+MAX_TODO_ITEMS = 10   # 卡片单次最多展开几条，超出只显示计数（避免卡片过长）
+
+
+def _fmt_ms(ms: int, fmt: str) -> str:
+    return datetime.fromtimestamp(ms / 1000, CST).strftime(fmt)
+
+
+def _todo_when(deadline_ms, now_ms: int) -> str:
+    """把截止时间说成人话：过期 / 今天 / 还有几天"""
+    if not deadline_ms:
+        return "无截止时间"
+    if deadline_ms < now_ms:
+        return f"⚠️ 已过期 {int((now_ms - deadline_ms) / DAY_MS) + 1} 天"
+    if deadline_ms - now_ms < DAY_MS:
+        return f"⏰ 今天 {_fmt_ms(deadline_ms, '%H:%M')} 截止"
+    return f"⏳ 还有 {int((deadline_ms - now_ms) / DAY_MS)} 天（{_fmt_ms(deadline_ms, '%m-%d %H:%M')}）"
+
+
+def _merge_todos(todos: list[dict]) -> list[dict]:
+    """按「公司+岗位+类型」聚合。
+
+    招聘系统常为同一件事发「邀请」+「提醒」多封邮件，数据层是全量落表的
+    （宁可多落不漏），展示层在这里合并，只留截止最早的那条。
+    """
+    best: dict[tuple, dict] = {}
+    for t in todos:
+        key = (t.get("company") or "", t.get("position") or "", t.get("type") or "")
+        cur = best.get(key)
+        if cur is None:
+            best[key] = dict(t, merged=1)
+            continue
+        cur["merged"] += 1
+        # 取更早的截止时间；原本没截止的，被有截止的取代
+        if t.get("deadline") and (not cur.get("deadline") or t["deadline"] < cur["deadline"]):
+            cur["deadline"] = t["deadline"]
+        if not cur.get("url") and t.get("url"):
+            cur["url"] = t["url"]
+    return list(best.values())
+
+
+def todo_list_card(todos: list[dict]):
+    """待办清单卡片
+
+    todos 每条：company / position / type / summary / deadline(毫秒|None) / url
+
+    排序：未过期按截止时间升序（无截止的排最后）；已过期的单独收在底部一行，
+    不占版面但也不丢——「超期未完成」恰恰是最需要你知道的那一类。
+    """
+    now_ms = int(datetime.now(CST).timestamp() * 1000)
+    items = _merge_todos(todos)
+
+    active = [t for t in items if not t.get("deadline") or t["deadline"] >= now_ms]
+    expired = [t for t in items if t.get("deadline") and t["deadline"] < now_ms]
+    active.sort(key=lambda t: t["deadline"] if t.get("deadline") else float("inf"))
+
+    elements = []
+    if not active:
+        elements.append({
+            "tag": "div",
+            "text": {"tag": "lark_md", "content": "🎉 没有待办的测评/笔试/面试，轻松一下"},
+        })
+
+    for t in active[:MAX_TODO_ITEMS]:
+        icon = TODO_TYPE_ICONS.get(t.get("type"), "🔹")
+        title = f"{icon} **{t.get('company') or '未知公司'}**"
+        if t.get("position"):
+            title += f" · {t['position']}"
+        lines = [title, f"{t.get('type') or '待办'}　{_todo_when(t.get('deadline'), now_ms)}"]
+        if t.get("summary"):
+            lines.append(t["summary"][:140])
+        if t.get("merged", 1) > 1:
+            lines.append(f"> 另有 {t['merged'] - 1} 封相关邮件")
+        elements.append({"tag": "div", "text": {"tag": "lark_md", "content": "\n".join(lines)}})
+        if t.get("url"):
+            elements.append({"tag": "action", "actions": [{
+                "tag": "button",
+                "text": {"tag": "plain_text",
+                         "content": TODO_BUTTON_LABELS.get(t.get("type"), "🔗 打开")},
+                "type": "primary",
+                "url": t["url"],
+            }]})
+        elements.append({"tag": "hr"})
+
+    if len(active) > MAX_TODO_ITEMS:
+        elements.append({"tag": "div", "text": {"tag": "lark_md",
+            "content": f"…还有 **{len(active) - MAX_TODO_ITEMS}** 条待办，去多维表格查看全部"}})
+
+    if expired:
+        elements.append({"tag": "div", "text": {"tag": "lark_md",
+            "content": f"📁 另有 **{len(expired)}** 条已过期未勾选（可能已错过，去表里确认下）"}})
+
+    return {
+        "config": {"wide_screen_mode": True},
+        "header": {
+            "title": {"tag": "plain_text", "content": f"📋 待办清单（{len(active)}）"},
+            "template": "orange" if active else "green",
+        },
+        "elements": elements,
+    }
 
 
 def rejection_insight_card(company: str, position: str, insights: list[str]):
