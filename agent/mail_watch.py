@@ -307,7 +307,13 @@ def main(argv=None):
     args = ap.parse_args(argv)
 
     if not (config.MAIL_USER and config.MAIL_AUTH_CODE):
-        print("❌ 未配置 MAIL_USER / MAIL_AUTH_CODE（请写入 agent/.env）")
+        print("❌ 未配置 MAIL_USER / MAIL_AUTH_CODE（本地放 agent/.env，云端放 GitHub Secrets）")
+        return 1
+
+    if not config.LLM_API_KEY:
+        # 缺 key 时直接退出，不要逐封报错：那样循环会跑完并返回 0，
+        # 在 Actions 里表现为「绿灯通过、其实一封没处理」，比直接失败更难发现
+        print("❌ 未配置 LLM_API_KEY，无法判定邮件（本地放 agent/.env，云端放 GitHub Secrets）")
         return 1
 
     try:
