@@ -47,6 +47,9 @@ MAIL_LOOKBACK_DAYS = int(env("MAIL_LOOKBACK_DAYS", "7"))    # mail_check.py 用�
 MAIL_START_DATE = env("MAIL_START_DATE", "2026-09-01")
 # QQ IMAP 不支持 SINCE 筛选，只能先取最新的 N 封，再按 Date 在本地过滤
 MAIL_FETCH_LIMIT = int(env("MAIL_FETCH_LIMIT", "300"))
+# 日常运行回看最近几天。刻意不是「当天」：23:00 之后到达、或服务器延迟投递的邮件
+# 时间戳落在前一天，只读当天会永久漏掉。多读几天靠 Message-ID 去重，不会重复落表
+MAIL_WINDOW_DAYS = int(env("MAIL_WINDOW_DAYS", "2"))
 
 # ========== LLM 配置（BYOK，均可通过环境变量覆盖） ==========
 LLM_API_KEY = env("LLM_API_KEY", "")                           # 你的 API Key

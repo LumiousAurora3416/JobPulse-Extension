@@ -298,24 +298,30 @@ def existing_message_ids(client):
     return ids
 
 
-def main():
+def main(argv=None):
     ap = argparse.ArgumentParser(description="求职邮件 → 待办")
     ap.add_argument("--dry-run", action="store_true", help="只打印判定结果，不写表")
     ap.add_argument("--limit", type=int, default=0, help="只处理最新的 N 封邮件（试跑用）")
-    ap.add_argument("--since", default=config.MAIL_START_DATE, help="只处理该日期之后的邮件")
-    args = ap.parse_args()
+    ap.add_argument("--since", default="",
+                    help=f"起始日期 YYYY-MM-DD（默认：最近 {config.MAIL_WINDOW_DAYS} 天）")
+    args = ap.parse_args(argv)
 
     if not (config.MAIL_USER and config.MAIL_AUTH_CODE):
         print("❌ 未配置 MAIL_USER / MAIL_AUTH_CODE（请写入 agent/.env）")
         return 1
 
     try:
-        since = datetime.strptime(args.since, "%Y-%m-%d").replace(tzinfo=CST)
+        floor = datetime.strptime(config.MAIL_START_DATE, "%Y-%m-%d").replace(tzinfo=CST)
+        if args.since:
+            since = datetime.strptime(args.since, "%Y-%m-%d").replace(tzinfo=CST)
+        else:
+            since = datetime.now(CST) - timedelta(days=config.MAIL_WINDOW_DAYS)
+        since = max(since, floor)     # 硬下限：防止误传 --since 把整个邮箱拉一遍
     except ValueError:
-        print(f"❌ --since 格式应为 YYYY-MM-DD，收到：{args.since}")
+        print(f"❌ 日期格式应为 YYYY-MM-DD，收到：{args.since}")
         return 1
 
-    print(f"邮箱：{config.MAIL_USER}    起始：{since:%Y-%m-%d}"
+    print(f"邮箱：{config.MAIL_USER}    起始：{since:%Y-%m-%d %H:%M}"
           f"    {'【试跑，不写表】' if args.dry_run else '【正式写入】'}\n")
 
     try:
@@ -348,7 +354,8 @@ def main():
             continue
 
         try:
-            verdict = llm.classify(SYSTEM_PROMPT, build_prompt(mail))
+            # temperature=0：截止时间要逐字准，0.1 会让同一封邮件两次跑出不同结果
+            verdict = llm.classify(SYSTEM_PROMPT, build_prompt(mail), temperature=0)
         except Exception as e:
             stats["error"] += 1
             print(f"{head}  ⚠️ LLM 调用失败：{e}")

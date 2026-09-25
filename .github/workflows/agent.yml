@@ -2,9 +2,11 @@ name: JobPulse Agent
 
 on:
   schedule:
-    # 每天早上 9:00 执行（UTC+8 = UTC 1:00）
+    # 每天 9:00（北京时间）执行投递追踪
     - cron: "0 1 * * *"
-  workflow_dispatch:  # 手动触发
+    # 每天 23:00（北京时间）执行求职邮件监控 → 待办表
+    - cron: "0 15 * * *"
+  workflow_dispatch:  # 手动触发（两个任务都跑）
 
 jobs:
   agent:
@@ -20,7 +22,10 @@ jobs:
       - name: 安装依赖
         run: pip install -r agent/requirements.txt
 
+      # schedule 触发时 github.event.schedule 是命中的那条 cron；
+      # workflow_dispatch 手动触发时它为空 → 两个任务都跑
       - name: 执行投递追踪
+        if: github.event_name == 'workflow_dispatch' || github.event.schedule != '0 15 * * *'
         env:
           FEISHU_APP_ID: ${{ secrets.FEISHU_APP_ID }}
           FEISHU_APP_SECRET: ${{ secrets.FEISHU_APP_SECRET }}
@@ -33,3 +38,18 @@ jobs:
           LLM_API_BASE: ${{ secrets.LLM_API_BASE }}
           LLM_MODEL: ${{ secrets.LLM_MODEL }}
         run: python agent/agent.py --full
+
+      - name: 执行邮件监控
+        if: github.event_name == 'workflow_dispatch' || github.event.schedule == '0 15 * * *'
+        env:
+          FEISHU_APP_ID: ${{ secrets.FEISHU_APP_ID }}
+          FEISHU_APP_SECRET: ${{ secrets.FEISHU_APP_SECRET }}
+          FEISHU_APP_TOKEN: ${{ secrets.FEISHU_APP_TOKEN }}
+          FEISHU_TABLE_ID: ${{ secrets.FEISHU_TABLE_ID }}
+          LLM_API_KEY: ${{ secrets.LLM_API_KEY }}
+          LLM_API_BASE: ${{ secrets.LLM_API_BASE }}
+          LLM_MODEL: ${{ secrets.LLM_MODEL }}
+          # 邮箱凭证：授权码等于邮箱完整读取权限，只走 Secrets
+          MAIL_USER: ${{ secrets.MAIL_USER }}
+          MAIL_AUTH_CODE: ${{ secrets.MAIL_AUTH_CODE }}
+        run: python agent/agent.py --mail

@@ -210,19 +210,24 @@ class LLMClient:
                         start = -1
         raise RuntimeError(f"LLM 返回无法解析的 JSON: {text[:300]}...")
 
-    def classify(self, system_prompt: str, user_message: str) -> dict:
+    def classify(self, system_prompt: str, user_message: str,
+                 temperature: float = 0.1) -> dict:
         """Call LLM for structured JSON output (intent classification).
-        Uses low temperature for consistent results."""
+
+        默认低温度求稳定。抽取「截止时间」这类要求逐字准确的场景请传 temperature=0：
+        实测 0.1 会让同一封邮件的截止时间在两次运行间漂移（如 19:00 / 20:00）。
+        """
         if not self.api_key:
             raise RuntimeError("LLM_API_KEY 未配置")
 
         import requests
 
         if "anthropic" in self.api_base:
-            return self._classify_anthropic(system_prompt, user_message)
-        return self._classify_openai(system_prompt, user_message)
+            return self._classify_anthropic(system_prompt, user_message, temperature)
+        return self._classify_openai(system_prompt, user_message, temperature)
 
-    def _classify_anthropic(self, system_prompt: str, user_message: str) -> dict:
+    def _classify_anthropic(self, system_prompt: str, user_message: str,
+                            temperature: float = 0.1) -> dict:
         import requests
 
         resp = requests.post(
@@ -235,6 +240,7 @@ class LLMClient:
             json={
                 "model": self.model,
                 "max_tokens": 2000,
+                "temperature": temperature,
                 "system": system_prompt,
                 "messages": [{"role": "user", "content": user_message}],
             },
@@ -246,7 +252,8 @@ class LLMClient:
         content = data["content"][0]["text"]
         return self._extract_json(content)
 
-    def _classify_openai(self, system_prompt: str, user_message: str) -> dict:
+    def _classify_openai(self, system_prompt: str, user_message: str,
+                         temperature: float = 0.1) -> dict:
         import requests
 
         # Try with response_format first (OpenAI / DeepSeek compatible)
@@ -257,7 +264,7 @@ class LLMClient:
                 {"role": "user", "content": user_message},
             ],
             "max_tokens": 2000,
-            "temperature": 0.1,
+            "temperature": temperature,
         }
 
         for attempt in range(2):

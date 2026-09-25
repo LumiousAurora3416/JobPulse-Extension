@@ -437,11 +437,20 @@ def run_match(jd_path: str, resume_path: str):
     print(json.dumps(report, ensure_ascii=False, indent=2))
 
 
+def run_mail_watch():
+    """求职邮件监控：读邮箱 → LLM 判定 → 写「待办」表"""
+    from mail_watch import main as mail_watch_main
+
+    # 传空 argv：mail_watch 有自己的 argparse，不能让它看到 agent.py 的 --mail
+    return mail_watch_main([])
+
+
 def main():
     parser = argparse.ArgumentParser(description="JobPulse Agent")
     parser.add_argument("--full", action="store_true", help="执行追踪 + 分析")
     parser.add_argument("--analyze", action="store_true", help="仅执行归因分析")
     parser.add_argument("--stats", action="store_true", help="仅执行数据统计")
+    parser.add_argument("--mail", action="store_true", help="执行求职邮件监控（写入待办表）")
     parser.add_argument("--match", action="store_true", help="岗位匹配度评分（配 --jd --resume）")
     parser.add_argument("--jd", help="岗位 JD 文本文件路径")
     parser.add_argument("--resume", help="简历文本文件路径")
@@ -449,6 +458,8 @@ def main():
 
     if args.match:
         run_match(args.jd, args.resume)
+    elif args.mail:
+        run_mail_watch()
     elif args.stats:
         run_statistics()
     elif args.analyze:
