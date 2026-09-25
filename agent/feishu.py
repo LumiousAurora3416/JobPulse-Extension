@@ -41,7 +41,8 @@ class FeishuClient:
 
     def __init__(self, table_id: str = ""):
         self._session = _session()
-        # 默认写投递表；埋点表等其它表用 table_id 覆盖（当前仅 create_record 使用）
+        # 默认操作投递表；埋点表 / 待办表等用 table_id 覆盖
+        # （list_records / get_record / update_record 也都按 self._table_id 走）
         self._table_id = table_id or FEISHU_TABLE_ID
         # Use shared module-level token cache
         self._token = _shared_token
@@ -93,7 +94,7 @@ class FeishuClient:
             params = {"page_size": page_size}
             if page_token:
                 params["page_token"] = page_token
-            url = f"{self.BITABLE_URL}/{FEISHU_APP_TOKEN}/tables/{FEISHU_TABLE_ID}/records"
+            url = f"{self.BITABLE_URL}/{FEISHU_APP_TOKEN}/tables/{self._table_id}/records"
             try:
                 resp = self._session.get(url, headers=self._headers(), params=params, timeout=30)
             except requests.exceptions.RequestException as e:
@@ -110,7 +111,7 @@ class FeishuClient:
 
     def get_record(self, record_id: str) -> dict:
         """获取单条记录"""
-        url = f"{self.BITABLE_URL}/{FEISHU_APP_TOKEN}/tables/{FEISHU_TABLE_ID}/records/{record_id}"
+        url = f"{self.BITABLE_URL}/{FEISHU_APP_TOKEN}/tables/{self._table_id}/records/{record_id}"
         resp = self._session.get(url, headers=self._headers(), timeout=10)
         data = resp.json()
         if data.get("code") != 0:
@@ -120,7 +121,7 @@ class FeishuClient:
 
     def update_record(self, record_id: str, fields: dict) -> bool:
         """更新单条记录"""
-        url = f"{self.BITABLE_URL}/{FEISHU_APP_TOKEN}/tables/{FEISHU_TABLE_ID}/records/{record_id}"
+        url = f"{self.BITABLE_URL}/{FEISHU_APP_TOKEN}/tables/{self._table_id}/records/{record_id}"
         resp = self._session.put(url, headers=self._headers(), json={"fields": fields}, timeout=10)
         data = resp.json()
         if data.get("code") != 0:

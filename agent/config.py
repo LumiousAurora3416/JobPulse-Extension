@@ -26,6 +26,8 @@ FEISHU_APP_SECRET = env("FEISHU_APP_SECRET")   # 飞书自建应用 App Secret
 FEISHU_APP_TOKEN = env("FEISHU_APP_TOKEN")     # 多维表格 Base Token
 FEISHU_TABLE_ID = env("FEISHU_TABLE_ID")       # 多维表格 Table ID（投递表）
 FEISHU_TRACK_TABLE_ID = env("FEISHU_TRACK_TABLE_ID")  # 插件埋点表 Table ID（留空则丢弃埋点）
+# 「待办」表 Table ID（邮件监控写入）。表 ID 不是密钥，给个默认值省得每处都配
+FEISHU_TODO_TABLE_ID = env("FEISHU_TODO_TABLE_ID", "tblmclGkCNe8eSLo")
 
 # 飞书用户/群组 ID（发消息给谁）
 # 可在飞书 Open API 调试台获取，或直接用 Webhook 地址
@@ -40,7 +42,11 @@ MAIL_USER = env("MAIL_USER")              # 完整邮箱地址（IMAP 登录名�
 MAIL_AUTH_CODE = env("MAIL_AUTH_CODE")    # 16 位授权码（不是 QQ 密码）
 # 留成可覆盖：foxmail.com 别名等场景可能要换 IMAP 服务器
 MAIL_IMAP_HOST = env("MAIL_IMAP_HOST", "imap.qq.com")
-MAIL_LOOKBACK_DAYS = int(env("MAIL_LOOKBACK_DAYS", "7"))    # 每次拉取最近几天
+MAIL_LOOKBACK_DAYS = int(env("MAIL_LOOKBACK_DAYS", "7"))    # mail_check.py 用：拉取最近几天
+# mail_watch.py 用：只处理这个日期之后的邮件（首次回填的范围下限）
+MAIL_START_DATE = env("MAIL_START_DATE", "2026-09-01")
+# QQ IMAP 不支持 SINCE 筛选，只能先取最新的 N 封，再按 Date 在本地过滤
+MAIL_FETCH_LIMIT = int(env("MAIL_FETCH_LIMIT", "300"))
 
 # ========== LLM 配置（BYOK，均可通过环境变量覆盖） ==========
 LLM_API_KEY = env("LLM_API_KEY", "")                           # 你的 API Key
