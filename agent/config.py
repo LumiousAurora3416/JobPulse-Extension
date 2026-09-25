@@ -34,6 +34,14 @@ FEISHU_RECEIVER_ID = env("FEISHU_RECEIVER_ID")                # 飞书 user / op
 FEISHU_RECEIVER_TYPE = "open_id" # user_id | open_id | chat_id
 FEISHU_WEBHOOK = ""              # 群机器人 Webhook 地址（可选）
 
+# ========== 邮箱监控（求职邮件 → 待办） ==========
+# 授权码 = 邮箱的完整读取权限，只走环境变量 / GitHub Secrets，绝不写进代码
+MAIL_USER = env("MAIL_USER")              # 完整邮箱地址（IMAP 登录名要用完整地址）
+MAIL_AUTH_CODE = env("MAIL_AUTH_CODE")    # 16 位授权码（不是 QQ 密码）
+# 留成可覆盖：foxmail.com 别名等场景可能要换 IMAP 服务器
+MAIL_IMAP_HOST = env("MAIL_IMAP_HOST", "imap.qq.com")
+MAIL_LOOKBACK_DAYS = int(env("MAIL_LOOKBACK_DAYS", "7"))    # 每次拉取最近几天
+
 # ========== LLM 配置（BYOK，均可通过环境变量覆盖） ==========
 LLM_API_KEY = env("LLM_API_KEY", "")                           # 你的 API Key
 LLM_API_BASE = env("LLM_API_BASE", "https://api.openai.com/v1")  # 兼容 OpenAI 格式的接口
