@@ -186,6 +186,7 @@ TODO_TYPE_ICONS = {
     "面试": "🎤",
     "完善资料": "📄",
     "其他": "🔹",
+    "提醒": "🔔",
 }
 
 TODO_BUTTON_LABELS = {
@@ -194,6 +195,7 @@ TODO_BUTTON_LABELS = {
     "面试": "🎤 参加面试",
     "完善资料": "📄 去填写",
     "其他": "🔗 打开",
+    "提醒": "🔔 查看提醒",
 }
 
 MAX_TODO_ITEMS = 10   # 卡片单次最多展开几条，超出只显示计数（避免卡片过长）
@@ -215,19 +217,26 @@ def _todo_when(deadline_ms, now_ms: int) -> str:
 
 
 def _merge_todos(todos: list[dict]) -> list[dict]:
-    """按「公司+岗位+类型」聚合。
+    """按「公司+岗位+事项」聚合。
 
     招聘系统常为同一件事发「邀请」+「提醒」多封邮件，数据层是全量落表的
     （宁可多落不漏），展示层在这里合并，只留截止最早的那条。
+
+    key 里**不放「类型」**：第二封的类型是「提醒」，放进去就归并不了了。
+    改用「事项」——同一件事的两封邮件事项相同（mail_watch 的 prompt 要求
+    提醒邮件的 summary 与原条目一致），不同的事事项不同。
     """
     best: dict[tuple, dict] = {}
     for t in todos:
-        key = (t.get("company") or "", t.get("position") or "", t.get("type") or "")
+        key = (t.get("company") or "", t.get("position") or "", t.get("summary") or "")
         cur = best.get(key)
         if cur is None:
             best[key] = dict(t, merged=1)
             continue
         cur["merged"] += 1
+        # 类型要保住"本体"：第二封是「提醒」，别把原类型顶掉
+        if cur.get("type") == "提醒" and t.get("type") != "提醒":
+            cur["type"] = t["type"]
         # 取更早的截止时间；原本没截止的，被有截止的取代
         if t.get("deadline") and (not cur.get("deadline") or t["deadline"] < cur["deadline"]):
             cur["deadline"] = t["deadline"]

@@ -105,7 +105,9 @@ TRACK_FIELDS = [
 TODO_TABLE_NAME = "待办"
 TODO_VIEW_NAME = "待办视图"
 # 单选列写入未定义的选项会 FieldConvFail 且整条记录失败，所以这里一次带全
-TODO_TYPE_OPTIONS = ["测评", "笔试", "面试", "完善资料", "其他"]
+# 「提醒」= 同一件事的第二封邮件（面试邀请之后又来一封面试提醒）。
+# 仍然落表、不做去重，靠类型列区分；卡片端会把它归并进原条目（见 cards._merge_todos）
+TODO_TYPE_OPTIONS = ["测评", "笔试", "面试", "完善资料", "其他", "提醒"]
 
 TODO_FIELDS = [
     {"field_name": "事项", "type": T_TEXT},        # 主字段：人话描述这件事要干嘛

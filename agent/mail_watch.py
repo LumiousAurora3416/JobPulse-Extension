@@ -27,9 +27,10 @@ from feishu import FeishuClient
 from llm_client import LLMClient
 
 BODY_CHARS = 1500        # 送进 LLM 的正文长度，够判断即可（太长白烧 token）
+REMINDER_LOOKBACK = 30   # 喂给 LLM 的「已有待办」条数上限，用于识别重复提醒
 # 要读的文件夹。Junk 也读：招聘邮件被误判进垃圾箱是常事，漏掉一封测评邀请的代价太大
 MAIL_FOLDERS = ["INBOX", "Junk"]
-TODO_TYPES = ["测评", "笔试", "面试", "完善资料", "其他"]  # 必须与 init_match_tables.TODO_TYPE_OPTIONS 一致
+TODO_TYPES = ["测评", "笔试", "面试", "完善资料", "其他", "提醒"]  # 必须与 init_match_tables.TODO_TYPE_OPTIONS 一致
 CST = timezone(timedelta(hours=8))   # 邮件时间一律按北京时间理解
 
 SYSTEM_PROMPT = """你是求职邮件助理。判断一封邮件是否需要**用户本人去做一件事**，并提取结构化信息。
@@ -50,7 +51,14 @@ SYSTEM_PROMPT = """你是求职邮件助理。判断一封邮件是否需要**�
   且既没有截止时间也没有操作链接——这类是日历重复提醒，正式通知在另一封邮件里
 
 【字段要求】
-- type 只能取：测评 / 笔试 / 面试 / 完善资料 / 其他
+- type 只能取：测评 / 笔试 / 面试 / 完善资料 / 其他 / 提醒
+  - 「提醒」专用于：这封是【已有待办】里某一条的重复提醒（同一件事又发了一封）
+- reminder_of：这封是不是【已有待办】里某条的重复提醒？
+  - 是 → 填那条待办的编号（如 "3"）；不是 → 空字符串 ""
+  - 判据：同一家公司 + 同一件事（如都是"参加面试"、都是"完成测评"）
+  - 标了提醒时：type 取「提醒」，summary **直接照抄那条已有待办的事项原文**，不要改写
+    （卡片靠"事项相同"把提醒归并进原条目，改写了就归并不上）
+  - 拿不准就不要标——宁可当成一条新待办，也不要误标
 - deadline：绝对时间，格式 "YYYY-MM-DD HH:MM"，按北京时间（UTC+8）
   - 原文是时间区间（如"9-23 00:00 至 9-25 23:59"）→ 取右端点
   - 原文是"X 个工作日内"→ 从邮件发送时间推算，跳过周六周日
@@ -67,7 +75,7 @@ SYSTEM_PROMPT = """你是求职邮件助理。判断一封邮件是否需要**�
 - company / position：邮件提到的公司名、岗位名，没有就留空字符串
 
 只输出 JSON，不要输出任何其他文字：
-{"actionable":true,"skip_reason":"","company":"","position":"","type":"测评","summary":"","note":"","deadline":null,"deadline_raw":"","action_url":null}"""
+{"actionable":true,"skip_reason":"","company":"","position":"","type":"测评","summary":"","note":"","reminder_of":"","deadline":null,"deadline_raw":"","action_url":null}"""
 
 
 # ── 邮件解析 ──────────────────────────────────────────────
@@ -229,14 +237,24 @@ def fetch_emails(since):
 
 # ── 判定与写表 ────────────────────────────────────────────
 
-def build_prompt(mail):
+def build_prompt(mail, pending=None):
     when = f"{mail['date']:%Y-%m-%d %H:%M}" if mail["date"] else "未知"
-    return (
-        f"邮件发送时间：{when}（北京时间）\n"
-        f"发件人：{mail['sender']}\n"
-        f"主题：{mail['subject']}\n"
-        f"正文：\n{mail['body']}"
-    )
+    parts = [
+        f"邮件发送时间：{when}（北京时间）",
+        f"发件人：{mail['sender']}",
+        f"主题：{mail['subject']}",
+        f"正文：\n{mail['body']}",
+    ]
+    if pending:
+        lines = ["", "【已有待办】判断这封是否为其某条的重复提醒（编号从 1 开始）："]
+        for i, t in enumerate(pending, 1):
+            sent = (datetime.fromtimestamp(t["sent"] / 1000, CST).strftime("%m-%d")
+                    if t.get("sent") else "日期未知")
+            pos = f" · {t['position']}" if t["position"] else ""
+            lines.append(f"{i}. {t['company'] or '未知公司'}{pos}"
+                         f" | {t['summary']} | {t['type']} | {sent} 收到")
+        parts.append("\n".join(lines))
+    return "\n".join(parts)
 
 
 def parse_deadline(value):
@@ -252,7 +270,7 @@ def parse_deadline(value):
     return None
 
 
-def build_fields(mail, verdict):
+def build_fields(mail, verdict, pending=None):
     """组装写入「待办」表的字段。空值不写，避免飞书对 None 的处理差异。
 
     单选列（待办类型）写入未定义的选项会 FieldConvFail 且**整条记录失败**，
@@ -272,9 +290,25 @@ def build_fields(mail, verdict):
         fields["岗位"] = position[:100]
 
     vtype = (verdict.get("type") or "").strip()
+
+    # 「重复提醒」判定：LLM 只给编号，这里回查是哪一条。
+    # 编号越界就当没标——宁可多落一条新待办，也不要写错"和谁重复"
+    reminder = None
+    idx = str(verdict.get("reminder_of") or "").strip()
+    if idx.isdigit() and pending:
+        n = int(idx)
+        if 1 <= n <= len(pending):
+            reminder = pending[n - 1]
+            vtype = "提醒"
+
     fields["待办类型"] = vtype if vtype in TODO_TYPES else "其他"
 
     note = (verdict.get("note") or "").strip()
+    if reminder:
+        sent = (datetime.fromtimestamp(reminder["sent"] / 1000, CST).strftime("%m-%d")
+                if reminder.get("sent") else "此前")
+        head = f"⚠ 与 {sent} 收到的「{reminder['summary']}」是同一件事"
+        note = f"{head}；{note}" if note else head
     if note:
         fields["注意事项"] = note[:500]
 
@@ -292,19 +326,38 @@ def build_fields(mail, verdict):
     return fields
 
 
-def existing_message_ids(client):
-    """读「待办」表已有的邮件 ID，用于去重"""
+def load_existing_todos(client):
+    """读「待办」表：返回 (已处理的邮件ID集合, 未完成待办摘要列表)
+
+    未完成待办摘要会喂给 LLM，用来判断新邮件是不是其中某条的重复提醒——
+    LLM 看不到表，不给它列表它就说不出"这和前面那条是同一件事"。
+    """
     try:
         records = client.list_records()
     except Exception as e:
         print(f"  ⚠️ 读取待办表失败，本次不做去重（可能重复写入）: {e}")
-        return set()
-    ids = set()
+        return set(), []
+
+    ids, pending = set(), []
     for rec in records:
         val = FeishuClient.field_value(rec, "邮件ID")
         if val:
             ids.add(str(val).strip())
-    return ids
+
+        # 复选框要读原始值：API 给布尔 False 时 field_value() 会转成字符串 "False"（真值）
+        if rec.get("fields", {}).get("已完成") is True:
+            continue
+        pending.append({
+            "company": FeishuClient.field_value(rec, "公司") or "",
+            "position": FeishuClient.field_value(rec, "岗位") or "",
+            "type": FeishuClient.field_value(rec, "待办类型") or "",
+            "summary": FeishuClient.field_value(rec, "事项") or "",
+            "sent": FeishuClient.field_value(rec, "邮件发送时间"),
+        })
+
+    # 只看最近的：几个月前的待办不可能是当前邮件的"重复提醒"对象
+    pending.sort(key=lambda t: t["sent"] or 0, reverse=True)
+    return ids, pending[:REMINDER_LOOKBACK]
 
 
 def main(argv=None):
@@ -350,8 +403,9 @@ def main(argv=None):
     print(f"日期范围内 {len(mails)} 封\n")
 
     todo_client = FeishuClient(table_id=config.FEISHU_TODO_TABLE_ID)
-    known = existing_message_ids(todo_client)
-    print(f"待办表已有 {len(known)} 条记录（按邮件 ID 去重）\n" + "=" * 70)
+    known, pending = load_existing_todos(todo_client)
+    print(f"待办表已有 {len(known)} 条记录（按邮件 ID 去重），"
+          f"其中 {len(pending)} 条未完成（用于判断是否重复提醒）\n" + "=" * 70)
 
     llm = LLMClient()
     stats = {"todo": 0, "skip": 0, "dup": 0, "error": 0}
@@ -370,7 +424,7 @@ def main(argv=None):
 
         try:
             # temperature=0：截止时间要逐字准，0.1 会让同一封邮件两次跑出不同结果
-            verdict = llm.classify(SYSTEM_PROMPT, build_prompt(mail), temperature=0)
+            verdict = llm.classify(SYSTEM_PROMPT, build_prompt(mail, pending), temperature=0)
         except Exception as e:
             stats["error"] += 1
             print(f"{head}  ⚠️ LLM 调用失败：{e}")
@@ -382,7 +436,7 @@ def main(argv=None):
             continue
 
         stats["todo"] += 1
-        fields = build_fields(mail, verdict)
+        fields = build_fields(mail, verdict, pending)
         dl = fields.get("截止时间")
         dl_text = (datetime.fromtimestamp(dl / 1000, CST).strftime("%m-%d %H:%M")
                    if dl else "无截止")
