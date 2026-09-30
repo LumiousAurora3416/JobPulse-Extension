@@ -55,14 +55,19 @@ SYSTEM_PROMPT = """你是求职邮件助理。判断一封邮件是否需要**�
   - 原文是时间区间（如"9-23 00:00 至 9-25 23:59"）→ 取右端点
   - 原文是"X 个工作日内"→ 从邮件发送时间推算，跳过周六周日
   - 没有明确时间要求 → null，不要猜
-- summary：一句话说清"要做什么"，并带上原文里的注意事项（如"需全程开摄像头""每题作答 3 分钟"）
+- summary：只写"要做什么"，不超过 15 个字，像待办清单上的一行
+  - 写法：动作 + 最小必要对象，如「参加美团在线笔试」「完成光大期货在线测评」
+  - 不要写年份、场次、岗位方向、考试时长、设备要求——这些都归 note
+- note：做的时候需要知道的注意事项；没有就留空字符串
+  - 如「需全程开摄像头（手机作为第二监控机位）」「提前 15 分钟调试设备」「开始后计时不可暂停」
+  - 不要重复 summary 里已经说过的动作本身
 - action_url：用户要点的那个链接（测评入口 / 面试入口 / 填表链接）
   - 排除：退订 unsubscribe、隐私政策、官网首页、公众号、招聘系统首页
   - 找不到合适的 → null
 - company / position：邮件提到的公司名、岗位名，没有就留空字符串
 
 只输出 JSON，不要输出任何其他文字：
-{"actionable":true,"skip_reason":"","company":"","position":"","type":"测评","summary":"","deadline":null,"deadline_raw":"","action_url":null}"""
+{"actionable":true,"skip_reason":"","company":"","position":"","type":"测评","summary":"","note":"","deadline":null,"deadline_raw":"","action_url":null}"""
 
 
 # ── 邮件解析 ──────────────────────────────────────────────
@@ -254,7 +259,7 @@ def build_fields(mail, verdict):
     所以这里再做一道白名单校验。
     """
     fields = {
-        "事项": (verdict.get("summary") or "").strip()[:500],
+        "事项": (verdict.get("summary") or "").strip()[:100],
         "已完成": False,
         "邮件ID": mail["message_id"],
         "邮件主题": mail["subject"][:200],
@@ -268,6 +273,10 @@ def build_fields(mail, verdict):
 
     vtype = (verdict.get("type") or "").strip()
     fields["待办类型"] = vtype if vtype in TODO_TYPES else "其他"
+
+    note = (verdict.get("note") or "").strip()
+    if note:
+        fields["注意事项"] = note[:500]
 
     ms = parse_deadline(verdict.get("deadline"))
     if ms:
@@ -378,7 +387,9 @@ def main(argv=None):
         dl_text = (datetime.fromtimestamp(dl / 1000, CST).strftime("%m-%d %H:%M")
                    if dl else "无截止")
         print(f"{head}  ✅ {fields['待办类型']}  截止={dl_text}")
-        print(f"        {fields['事项'][:110]}")
+        print(f"        {fields['事项']}")
+        if fields.get("注意事项"):
+            print(f"        ⚠ {fields['注意事项'][:110]}")
         raw = (verdict.get("deadline_raw") or "").strip()
         if raw:
             # 打印原文，方便人工核对推算出来的截止时间对不对

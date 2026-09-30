@@ -116,6 +116,9 @@ TODO_FIELDS = [
         "type": T_SINGLE,
         "property": {"options": [{"name": n} for n in TODO_TYPE_OPTIONS]},
     },
+    # 做的时候要注意的事（设备要求/时长/规则）。与「事项」分开：
+    # 事项只答"干什么"，注意事项是"干的时候要知道什么"，混在一起会让事项变成小作文
+    {"field_name": "注意事项", "type": T_TEXT},
     {"field_name": "截止时间", "type": T_DATE},      # 可空；没有期限的排在最后
     # 测评/笔试/面试入口。注意：这是免密登录凭据，别把本表分享给他人
     {"field_name": "行动链接", "type": T_LINK},
