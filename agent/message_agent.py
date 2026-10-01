@@ -11,6 +11,7 @@ callback_server.py 无需改动。
 
 import json
 import re
+import threading
 import time
 from datetime import datetime, timezone, timedelta
 
@@ -32,6 +33,11 @@ from status_rules import (
 # 「企业性质」单选列的可选值。三处必须一致：这里 / 飞书列选项（init_match_tables.py）
 # / popup.html 的下拉框。飞书单选字段写入不存在的选项会直接报错，不能自动新增。
 COMPANY_TYPES = ["央国企", "民营企业", "外企", "其他"]
+
+# 「查重 + 写入」必须原子：飞书超时会重推同一个事件，两条线程可能同时走到查重那一步、
+# 同时查到「不存在」，然后各写一条（实测记录被写重）。这把锁把它们串起来。
+# 单进程内有效——线上 gunicorn 是 1 个 sync worker（见 gunicorn.conf.py）。
+_CREATE_LOCK = threading.Lock()
 
 
 # ── Agent 系统提示词（function calling 模式） ──────────────────
@@ -399,30 +405,32 @@ def _execute_create(ctx, **kwargs) -> dict:
     if not company and not position:
         return {"ok": False, "error": "没识别到公司和岗位信息，麻烦说清楚一些，比如「我在Boss投了字节前端」"}
 
-    # 去重：完全同公司+岗位则提示，避免误录入
-    if company and position:
-        for rec in client.list_records():
-            existing_company = client.field_value(rec, "公司")
-            existing_position = client.field_value(rec, "岗位")
-            if existing_company == company and existing_position == position:
-                existing_status = client.field_value(rec, "结果")
-                return {
-                    "ok": False, "duplicate": True, "company": company, "position": position,
-                    "existing_status": existing_status or "未更新",
-                }
+    # 查重 + 写入必须原子（见 _CREATE_LOCK）：中间不能让别的线程查完再插一条进来
+    with _CREATE_LOCK:
+        # 去重：完全同公司+岗位则提示，避免误录入
+        if company and position:
+            for rec in client.list_records():
+                existing_company = client.field_value(rec, "公司")
+                existing_position = client.field_value(rec, "岗位")
+                if existing_company == company and existing_position == position:
+                    existing_status = client.field_value(rec, "结果")
+                    return {
+                        "ok": False, "duplicate": True, "company": company, "position": position,
+                        "existing_status": existing_status or "未更新",
+                    }
 
-    today = datetime.now()
-    today_ms = int(datetime(today.year, today.month, today.day).timestamp() * 1000)
-    fields = {
-        "公司": company,
-        "岗位": position,
-        "岗位JD": jd,
-        "结果": "简历",
-        "投递时间": today_ms,
-    }
-    if company_type:  # optional: only write when the user actually said it
-        fields["企业性质"] = company_type
-    record_id = client.create_record(fields)
+        today = datetime.now()
+        today_ms = int(datetime(today.year, today.month, today.day).timestamp() * 1000)
+        fields = {
+            "公司": company,
+            "岗位": position,
+            "岗位JD": jd,
+            "结果": "简历",
+            "投递时间": today_ms,
+        }
+        if company_type:  # optional: only write when the user actually said it
+            fields["企业性质"] = company_type
+        record_id = client.create_record(fields)
     if not record_id:
         return {"ok": False, "error": "创建失败，请稍后重试"}
 

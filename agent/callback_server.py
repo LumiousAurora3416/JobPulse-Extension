@@ -246,11 +246,48 @@ def _process_card_action(record_id: str, new_status: str):
         traceback.print_exc()
 
 
+# ── 事件幂等（v1.12.3）──────────────────────────────
+# 飞书要求事件回调 3 秒内响应，超时会重推同一个事件——实测同一条消息被推了 3 次
+# （0s / 196ms / 5min）。Render 免费实例冷启动要 7 秒以上（光 jieba 预热就 4 秒），
+# 必然超时，于是同一个事件被处理 3 次：发 3 条回复、往表里写 3 遍。
+# 这里按 header.event_id 去重，保证每个事件只处理一次。
+#
+# 刻意用内存字典而非磁盘文件：重推间隔（实测 ≤5 分钟）远小于实例休眠门槛（闲置 15 分钟），
+# 所以重推必然落在同一个进程里；而 Render 的磁盘是临时的，休眠换容器后文件一样会丢。
+_SEEN_EVENTS: dict = {}
+_SEEN_TTL_SEC = 30 * 60
+_seen_lock = threading.Lock()
+
+
+def _is_duplicate_event(event_id: str) -> bool:
+    """登记事件 id；返回 True 表示这个事件之前已经处理过。
+
+    顺手清掉过期条目——进程虽然短命，但这个字典没有别的回收时机。
+    """
+    if not event_id:
+        return False  # 拿不到 id 就没法去重，宁可多处理一次也不能丢消息
+    now = time.time()
+    with _seen_lock:
+        for k in [k for k, t in _SEEN_EVENTS.items() if now - t > _SEEN_TTL_SEC]:
+            del _SEEN_EVENTS[k]
+        if event_id in _SEEN_EVENTS:
+            return True
+        _SEEN_EVENTS[event_id] = now
+        return False
+
+
 def handle_event(payload: dict):
     """Handle Feishu event subscription events."""
     header = payload.get("header", {})
     event_type = header.get("event_type", "")
-    print(f"  📩 收到事件: {event_type}")
+    event_id = header.get("event_id", "")
+
+    # 幂等闸门：重复推送的事件直接丢弃，不再起线程（详见 _is_duplicate_event）
+    if _is_duplicate_event(event_id):
+        print(f"  ♻️ 重复事件已忽略: {event_type} event_id={event_id}")
+        return
+
+    print(f"  📩 收到事件: {event_type} event_id={event_id}")
 
     if event_type == "im.message.receive_v1":
         handle_message_event(payload.get("event", {}))
